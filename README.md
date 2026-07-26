@@ -8,6 +8,12 @@ Wide terminals use two stable zones: agent state and workspace identity stay lef
 
 ## Demo
 
+[![Animated Pi Atelier demo showing the status rail and live activity sidebar](https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/docs/demo.gif)](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.3.0/demo.mp4)
+
+[Watch the full-quality 74-second demo](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.3.0/demo.mp4) — the large video is hosted as a GitHub Release asset so it does not bloat Git clones or the npm package.
+
+### Interface details
+
 <table>
   <tr>
     <th width="72%">Status Rail and Atelier menu access</th>

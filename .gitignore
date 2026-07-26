@@ -2,6 +2,7 @@ node_modules/
 coverage/
 *.tgz
 *.log
+demo.mp4
 .DS_Store
 .tmp/
 .pi-subagents/

@@ -21,7 +21,7 @@ const required = [
 	"README.md",
 	"LICENSE",
 ];
-const forbidden = ["node_modules", "tests/", "docs/superpowers", ".git/", ".pi-subagents"];
+const forbidden = ["node_modules", "tests/", "docs/", ".git/", ".pi-subagents", "demo.mp4"];
 for (const path of required) {
 	if (!names.includes(path)) throw new Error(`Missing package file: ${path}`);
 }
