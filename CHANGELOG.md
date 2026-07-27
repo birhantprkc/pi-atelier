@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 — 2026-07-27
+
 - Add best-effort native completion notifications on macOS and Windows when a Pi turn settles or the explicit ask-user tool requests input; failures remain silent without a Terminal fallback.
 - Add a default-on, user-persisted completion notification toggle to the Atelier menu.
 - Keep notification content limited to project, session, and operational status.
