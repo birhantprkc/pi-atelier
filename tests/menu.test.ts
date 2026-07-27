@@ -47,8 +47,16 @@ function harness() {
 		compact: vi.fn(),
 	};
 	const save = vi.fn().mockResolvedValue(undefined);
-	const actions = createMenuActions(pi as never, ctx as never, runtime as never, "/tmp/user.json", save);
-	return { actions, pi, ctx, runtime, save };
+	const savePatch = vi.fn().mockResolvedValue(undefined);
+	const actions = createMenuActions(
+		pi as never,
+		ctx as never,
+		runtime as never,
+		"/tmp/user.json",
+		save,
+		savePatch,
+	);
+	return { actions, pi, ctx, runtime, save, savePatch };
 }
 
 describe("menu presentation", () => {
@@ -101,6 +109,56 @@ describe("menu presentation", () => {
 
 		expect(rootMenuItems[0]).toContainEqual(expected);
 		expect(sidebar.toggle).toHaveBeenCalledOnce();
+	});
+
+	it("shows and persists the completion notification toggle", async () => {
+		rootMenuItems.length = 0;
+		const h = harness();
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => false),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+		};
+		let invocation = 0;
+		const ctx = {
+			mode: "tui",
+			ui: {
+				notify: vi.fn(),
+				custom: vi.fn(
+					(factory: (...args: any[]) => unknown) =>
+						new Promise((resolve) => {
+							const value = invocation++ === 0 ? "notifications" : "close";
+							factory(
+								{ requestRender: vi.fn() },
+								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+								{},
+								resolve,
+							);
+							resolve(value);
+						}),
+				),
+			},
+		};
+
+		await openAtelierMenu(
+			{} as never,
+			ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			sidebar,
+			h.save,
+			h.savePatch,
+		);
+
+		expect(rootMenuItems[0]).toContainEqual({
+			value: "notifications",
+			label: "Completion notifications: On",
+			description: "Notify when a turn settles or Pi requests input",
+		});
+		expect(h.runtime.getConfig().completionNotifications).toBe(false);
+		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { completionNotifications: false });
+		expect(h.save).not.toHaveBeenCalled();
 	});
 
 	it("shows and toggles collapsed sidebar tool details", async () => {
@@ -184,6 +242,16 @@ describe("menu actions", () => {
 		const h = harness();
 		h.actions.setTools(["read", "missing"]);
 		expect(h.pi.setActiveTools).toHaveBeenCalledWith(["read"]);
+	});
+
+	it("persists only completion notifications while display changes remain session-scoped", async () => {
+		const h = harness();
+		h.actions.setPreset("minimal");
+		await h.actions.setCompletionNotifications(false);
+		expect(h.runtime.getConfig().completionNotifications).toBe(false);
+		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { completionNotifications: false });
+		expect(h.save).not.toHaveBeenCalled();
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Completion notifications disabled", "info");
 	});
 
 	it("persists display changes only after explicit save", async () => {

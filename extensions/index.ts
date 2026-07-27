@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	CONFIG_DIR_NAME,
 	type ExtensionAPI,
@@ -7,7 +7,13 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
-import { loadConfig, saveUserConfig } from "../src/config.js";
+import {
+	createCompletionNotifier,
+	type CompletionNotification,
+	type CompletionNotifier,
+	type SpawnNotificationProcess,
+} from "../src/completion-notifier.js";
+import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
 import { createFooterComponent, type ThemeLike } from "../src/footer.js";
 import { openAtelierMenu } from "../src/menu.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
@@ -22,6 +28,9 @@ import type { AtelierState } from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
+	saveConfigPatch?: typeof saveUserConfigPatch;
+	notificationPlatform?: NodeJS.Platform;
+	spawnNotificationProcess?: SpawnNotificationProcess;
 }
 
 export default function atelierExtension(
@@ -29,12 +38,17 @@ export default function atelierExtension(
 	dependencies: AtelierExtensionDependencies = {},
 ): void {
 	const saveConfig = dependencies.saveConfig ?? saveUserConfig;
+	const saveConfigPatch = dependencies.saveConfigPatch ?? saveUserConfigPatch;
 	let runtime: AtelierRuntime | undefined;
 	let currentContext: ExtensionContext | undefined;
 	let currentSessionManager: ExtensionContext["sessionManager"] | undefined;
 	let requestRender: () => void = () => undefined;
 	let sidebar: SidebarController | undefined;
 	let runActivity: RunActivityTracker | undefined;
+	let completionNotifier: CompletionNotifier | undefined;
+	let unsubscribeAskUserBlocked: (() => void) | undefined;
+	let askUserBlocked = false;
+	let inputRequestSequence = 0;
 	let extensionStatuses: readonly string[] = [];
 	let enabled = true;
 	let shortcutRegistered = false;
@@ -124,6 +138,21 @@ export default function atelierExtension(
 		}
 	}
 
+	function completionNotification(
+		ctx: ExtensionContext,
+		kind: CompletionNotification["kind"],
+		snapshot = runActivity?.getSnapshot(),
+	): CompletionNotification {
+		const sessionName = ctx.sessionManager.getSessionName();
+		return {
+			kind,
+			projectName: basename(ctx.cwd),
+			...(sessionName ? { sessionName } : {}),
+			...(snapshot === undefined ? {} : { completedToolCount: snapshot.completedCount }),
+			...(snapshot === undefined ? {} : { failedToolCount: snapshot.failedCount }),
+		};
+	}
+
 	async function openMenu(ctx: ExtensionContext): Promise<void> {
 		if (!runtime || !sidebar) {
 			ctx.ui.notify("Pi Atelier is not active in this session", "warning");
@@ -131,12 +160,20 @@ export default function atelierExtension(
 		}
 		const targetRuntime = runtime;
 		const targetSidebar = sidebar;
-		await openAtelierMenu(pi, ctx, targetRuntime, join(getAgentDir(), "pi-atelier.json"), {
-			isVisible: () => targetSidebar.isVisible(),
-			toggle: () => targetSidebar.toggle(),
-			isToolListExpanded: () => targetRuntime.getConfig().showSidebarToolNames,
-			toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
-		});
+		await openAtelierMenu(
+			pi,
+			ctx,
+			targetRuntime,
+			join(getAgentDir(), "pi-atelier.json"),
+			{
+				isVisible: () => targetSidebar.isVisible(),
+				toggle: () => targetSidebar.toggle(),
+				isToolListExpanded: () => targetRuntime.getConfig().showSidebarToolNames,
+				toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
+			},
+			saveConfig,
+			saveConfigPatch,
+		);
 	}
 
 	function installFooter(
@@ -240,6 +277,7 @@ export default function atelierExtension(
 
 		let localRuntime: AtelierRuntime | undefined;
 		let localSidebar: SidebarController | undefined;
+		let localCompletionNotifier: CompletionNotifier | undefined;
 		const isFresh = (): boolean => initializationGeneration === lifecycleGeneration;
 		const localRunActivity = createRunActivityTracker({
 			cwd: initializationContext.cwd,
@@ -278,9 +316,21 @@ export default function atelierExtension(
 				},
 			});
 			localRuntime = candidateRuntime;
+			const candidateCompletionNotifier = createCompletionNotifier({
+				isEnabled: () =>
+					enabled && runtime === candidateRuntime && candidateRuntime.getConfig().completionNotifications,
+				...(dependencies.notificationPlatform === undefined
+					? {}
+					: { platform: dependencies.notificationPlatform }),
+				...(dependencies.spawnNotificationProcess === undefined
+					? {}
+					: { spawn: dependencies.spawnNotificationProcess }),
+			});
+			localCompletionNotifier = candidateCompletionNotifier;
 			await candidateRuntime.refreshGitState();
 			if (!isFresh()) {
 				localRunActivity.reset();
+				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
 				return;
 			}
@@ -300,6 +350,7 @@ export default function atelierExtension(
 			if (!isFresh()) {
 				localSidebar.dispose();
 				localRunActivity.reset();
+				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
 				return;
 			}
@@ -307,15 +358,38 @@ export default function atelierExtension(
 			const previousSidebar = sidebar;
 			const previousRuntime = runtime;
 			const previousRunActivity = runActivity;
+			const previousCompletionNotifier = completionNotifier;
+			const previousUnsubscribeAskUserBlocked = unsubscribeAskUserBlocked;
 			runtime = candidateRuntime;
 			sidebar = localSidebar;
 			runActivity = localRunActivity;
+			completionNotifier = candidateCompletionNotifier;
 			currentContext = initializationContext;
 			currentSessionManager = initializationContext.sessionManager;
+			askUserBlocked = false;
+			inputRequestSequence = 0;
+			unsubscribeAskUserBlocked = pi.events.on("rpiv:ask-user:blocked", (data) => {
+				if (runtime !== candidateRuntime || completionNotifier !== candidateCompletionNotifier) return;
+				if (typeof data !== "object" || data === null || !("active" in data)) return;
+				const active = (data as { active?: unknown }).active;
+				if (active === false) {
+					askUserBlocked = false;
+					return;
+				}
+				if (active !== true || askUserBlocked) return;
+				askUserBlocked = true;
+				inputRequestSequence += 1;
+				candidateCompletionNotifier.inputRequested(
+					`blocked-${inputRequestSequence}`,
+					completionNotification(initializationContext, "input-requested", localRunActivity.getSnapshot()),
+				);
+			});
 			extensionStatuses = [];
 			previousSidebar?.dispose();
 			previousRuntime?.dispose();
 			previousRunActivity?.reset();
+			previousCompletionNotifier?.reset();
+			previousUnsubscribeAskUserBlocked?.();
 
 			if (isFresh() && !shortcutRegistered) {
 				try {
@@ -355,6 +429,7 @@ export default function atelierExtension(
 		} catch (error) {
 			localSidebar?.dispose();
 			localRunActivity.reset();
+			localCompletionNotifier?.reset();
 			localRuntime?.dispose();
 			if (!isFresh()) return;
 			sidebar?.dispose();
@@ -364,6 +439,13 @@ export default function atelierExtension(
 			const previousRunActivity = runActivity;
 			runActivity = undefined;
 			previousRunActivity?.reset();
+			const previousCompletionNotifier = completionNotifier;
+			completionNotifier = undefined;
+			previousCompletionNotifier?.reset();
+			const unsubscribe = unsubscribeAskUserBlocked;
+			unsubscribeAskUserBlocked = undefined;
+			unsubscribe?.();
+			askUserBlocked = false;
 			currentContext = undefined;
 			currentSessionManager = undefined;
 			updateExtensionStatuses([]);
@@ -379,12 +461,14 @@ export default function atelierExtension(
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity || !current.runtime) return;
 		current.runActivity.startRun();
+		completionNotifier?.runStarted();
 		current.runtime.setActivity("working");
 	});
 	pi.on("turn_start", (event, ctx) => {
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity) return;
 		current.runActivity.startTurn(event.turnIndex);
+		completionNotifier?.runStarted();
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		const current = getCurrentContextState(ctx);
@@ -398,10 +482,13 @@ export default function atelierExtension(
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
-		if (!current?.runActivity || !current.runtime) return;
+		if (!current?.runActivity || !current.runtime || !ctx.isIdle()) return;
 		current.runActivity.settle();
 		current.runtime.setActivity("ready");
 		current.sidebar?.requestRender();
+		completionNotifier?.turnSettled(
+			completionNotification(current.ctx, "turn-settled", current.runActivity.getSnapshot()),
+		);
 	});
 	pi.on("turn_end", async (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
@@ -424,6 +511,13 @@ export default function atelierExtension(
 		const previousRunActivity = current?.runActivity ?? runActivity;
 		runActivity = undefined;
 		previousRunActivity?.reset();
+		const previousCompletionNotifier = completionNotifier;
+		completionNotifier = undefined;
+		previousCompletionNotifier?.reset();
+		const unsubscribe = unsubscribeAskUserBlocked;
+		unsubscribeAskUserBlocked = undefined;
+		unsubscribe?.();
+		askUserBlocked = false;
 		current?.ctx.ui.setFooter(undefined);
 		currentContext = undefined;
 		currentSessionManager = undefined;

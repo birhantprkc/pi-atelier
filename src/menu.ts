@@ -13,11 +13,12 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { saveUserConfig } from "./config.js";
+import { saveUserConfig, saveUserConfigPatch } from "./config.js";
 import type { AtelierRuntime } from "./state.js";
 import { DEFAULT_CONFIG, type AtelierConfig, type PresetName, type SegmentId } from "./types.js";
 
 export type SaveConfig = typeof saveUserConfig;
+export type SaveConfigPatch = typeof saveUserConfigPatch;
 
 export interface SidebarControls {
 	isVisible(): boolean;
@@ -69,6 +70,7 @@ export function createMenuActions(
 	runtime: Pick<AtelierRuntime, "getConfig" | "setConfig" | "refreshUsage">,
 	userConfigPath: string,
 	save: SaveConfig = saveUserConfig,
+	savePatch: SaveConfigPatch = saveUserConfigPatch,
 ) {
 	return {
 		async selectModel(model: Parameters<ExtensionAPI["setModel"]>[0]): Promise<void> {
@@ -129,6 +131,20 @@ export function createMenuActions(
 		},
 		setOrnament(ornament: AtelierConfig["ornament"]): void {
 			runtime.setConfig({ ...runtime.getConfig(), ornament });
+		},
+		async setCompletionNotifications(enabled: boolean): Promise<void> {
+			runtime.setConfig({ ...runtime.getConfig(), completionNotifications: enabled });
+			try {
+				await savePatch(userConfigPath, { completionNotifications: enabled });
+				ctx.ui.notify(`Completion notifications ${enabled ? "enabled" : "disabled"}`, "info");
+			} catch (error) {
+				ctx.ui.notify(
+					`Completion notifications changed for this session but could not be saved: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+					"warning",
+				);
+			}
 		},
 		moveSegment(id: SegmentId, direction: "earlier" | "later"): void {
 			const segments = [...runtime.getConfig().segments];
@@ -273,15 +289,18 @@ export async function openAtelierMenu(
 	runtime: AtelierRuntime,
 	userConfigPath: string,
 	sidebar: SidebarControls,
+	save: SaveConfig = saveUserConfig,
+	savePatch: SaveConfigPatch = saveUserConfigPatch,
 ): Promise<void> {
 	if (ctx.mode !== "tui") {
 		ctx.ui.notify("Pi Atelier menu requires TUI mode", "warning");
 		return;
 	}
-	const actions = createMenuActions(pi, ctx, runtime, userConfigPath);
+	const actions = createMenuActions(pi, ctx, runtime, userConfigPath, save, savePatch);
 	for (;;) {
 		const sidebarVisible = sidebar.isVisible();
 		const toolListExpanded = sidebar.isToolListExpanded();
+		const notificationsEnabled = runtime.getConfig().completionNotifications;
 		const section = await showSelection(ctx, "◆ Pi Atelier", [
 			{
 				value: "sidebar",
@@ -294,6 +313,11 @@ export async function openAtelierMenu(
 				description: toolListExpanded
 					? "Collapse sidebar tool names"
 					: "Show active tool names in the sidebar",
+			},
+			{
+				value: "notifications",
+				label: `Completion notifications: ${notificationsEnabled ? "On" : "Off"}`,
+				description: "Notify when a turn settles or Pi requests input",
 			},
 			{ value: "model", label: "Model", description: "Model and thinking level" },
 			{ value: "tools", label: "Tools", description: "Search and toggle active tools" },
@@ -309,6 +333,10 @@ export async function openAtelierMenu(
 		}
 		if (section === "sidebar-tools") {
 			await sidebar.toggleToolList();
+			continue;
+		}
+		if (section === "notifications") {
+			await actions.setCompletionNotifications(!notificationsEnabled);
 			continue;
 		}
 

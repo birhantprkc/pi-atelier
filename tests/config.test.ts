@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, saveUserConfig, validateConfig } from "../src/config.js";
+import { loadConfig, saveUserConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
 let root: string;
@@ -18,9 +18,10 @@ beforeEach(async () => {
 });
 
 describe("configuration", () => {
-	it("defaults to no brand ornament and collapsed sidebar tool details", () => {
+	it("defaults to no brand ornament, collapsed tool details, and completion notifications", () => {
 		expect(DEFAULT_CONFIG.ornament).toBe("none");
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
+		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 	});
 
 	it("merges defaults, user, trusted project, then session overrides", async () => {
@@ -38,6 +39,26 @@ describe("configuration", () => {
 			contextWarning: 65,
 			ornament: "none",
 		});
+	});
+
+	it("keeps completion notifications as a global user preference", async () => {
+		await writeJson(userPath, { completionNotifications: false });
+		await writeJson(projectPath, { completionNotifications: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { completionNotifications: true },
+		});
+
+		expect(result.config.completionNotifications).toBe(false);
+	});
+
+	it("does not let project configuration disable default-on completion notifications", async () => {
+		await writeJson(projectPath, { completionNotifications: false });
+		const result = await loadConfig({ userPath, projectPath, projectTrusted: true });
+
+		expect(result.config.completionNotifications).toBe(true);
 	});
 
 	it("does not read untrusted project configuration", async () => {
@@ -64,11 +85,15 @@ describe("configuration", () => {
 		);
 	});
 
-	it("validates the sidebar tool-detail preference", () => {
-		expect(validateConfig({ showSidebarToolNames: true }).config.showSidebarToolNames).toBe(true);
-		const invalid = validateConfig({ showSidebarToolNames: "yes" });
+	it("validates boolean preferences", () => {
+		expect(
+			validateConfig({ showSidebarToolNames: true, completionNotifications: false }).config,
+		).toMatchObject({ showSidebarToolNames: true, completionNotifications: false });
+		const invalid = validateConfig({ showSidebarToolNames: "yes", completionNotifications: "yes" });
 		expect(invalid.config.showSidebarToolNames).toBe(false);
+		expect(invalid.config.completionNotifications).toBe(true);
 		expect(invalid.warnings).toContain("showSidebarToolNames must be boolean");
+		expect(invalid.warnings).toContain("completionNotifications must be boolean");
 	});
 
 	it("reports malformed JSON once and retains defaults", async () => {
@@ -82,5 +107,16 @@ describe("configuration", () => {
 		await saveUserConfig(userPath, { ...DEFAULT_CONFIG, preset: "classic" });
 		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({ preset: "classic" });
 		expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+	});
+
+	it("patches one user preference without persisting effective defaults or losing unknown fields", async () => {
+		await writeJson(userPath, { density: "compact", futureSetting: "keep" });
+		await saveUserConfigPatch(userPath, { completionNotifications: false });
+
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
+			density: "compact",
+			futureSetting: "keep",
+			completionNotifications: false,
+		});
 	});
 });
