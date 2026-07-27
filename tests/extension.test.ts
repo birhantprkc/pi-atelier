@@ -464,6 +464,18 @@ describe("extension registration", () => {
 		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
+	it("rearms settlement delivery from turn_start when agent_start was missed", async () => {
+		const h = harness("tui", "darwin");
+		await start(h);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+
+		await h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 1 }, h.ctx);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+
+		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(2);
+	});
+
 	it("does not notify settlement when another extension has already started a run", async () => {
 		const h = harness();
 		await start(h);

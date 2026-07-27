@@ -468,6 +468,7 @@ export default function atelierExtension(
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity) return;
 		current.runActivity.startTurn(event.turnIndex);
+		completionNotifier?.runStarted();
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		const current = getCurrentContextState(ctx);
