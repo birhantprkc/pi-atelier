@@ -320,7 +320,6 @@ export default function atelierExtension(
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled && runtime === candidateRuntime && candidateRuntime.getConfig().completionNotifications,
-				terminal: (message, level) => initializationContext.ui.notify(message, level),
 				...(dependencies.notificationPlatform === undefined
 					? {}
 					: { platform: dependencies.notificationPlatform }),

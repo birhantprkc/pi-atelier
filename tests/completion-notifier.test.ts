@@ -22,32 +22,29 @@ const settled: CompletionNotification = {
 };
 
 function harness(platform: NodeJS.Platform = "linux") {
-	const terminal = vi.fn();
 	const process = new FakeProcess();
 	const spawn = vi.fn<SpawnNotificationProcess>(() => process);
 	let enabled = true;
 	const notifier = createCompletionNotifier({
 		platform,
 		spawn,
-		terminal,
 		isEnabled: () => enabled,
 	});
-	return { notifier, terminal, spawn, process, disable: () => (enabled = false) };
+	return { notifier, spawn, process, disable: () => (enabled = false) };
 }
 
 describe("completion notifier", () => {
-	it("notifies once when a run settles without using a duration threshold", () => {
-		const h = harness();
+	it("delivers one macOS system notification when a run settles without a duration threshold", () => {
+		const h = harness("darwin");
 		h.notifier.runStarted();
 		h.notifier.turnSettled({ ...settled, durationMs: 0 });
 		h.notifier.turnSettled(settled);
 
-		expect(h.terminal).toHaveBeenCalledOnce();
-		expect(h.terminal).toHaveBeenCalledWith("Turn settled · Notification work · 2 done · 1 failed", "info");
+		expect(h.spawn).toHaveBeenCalledOnce();
 	});
 
-	it("notifies once per explicit input-request tool call", () => {
-		const h = harness();
+	it("delivers one Windows system notification per explicit input-request tool call", () => {
+		const h = harness("win32");
 		h.notifier.runStarted();
 		const notification: CompletionNotification = {
 			kind: "input-requested",
@@ -58,8 +55,7 @@ describe("completion notifier", () => {
 		h.notifier.inputRequested("question-1", notification);
 		h.notifier.inputRequested("question-2", notification);
 
-		expect(h.terminal).toHaveBeenCalledTimes(2);
-		expect(h.terminal).toHaveBeenLastCalledWith("Input requested · Notification work", "info");
+		expect(h.spawn).toHaveBeenCalledTimes(2);
 	});
 
 	it("does nothing while completion notifications are disabled", () => {
@@ -69,7 +65,6 @@ describe("completion notifier", () => {
 		h.notifier.inputRequested("question-1", { kind: "input-requested", projectName: "private" });
 		h.notifier.turnSettled(settled);
 
-		expect(h.terminal).not.toHaveBeenCalled();
 		expect(h.spawn).not.toHaveBeenCalled();
 	});
 
@@ -143,20 +138,17 @@ describe("completion notifier", () => {
 		}
 	});
 
-	it("keeps terminal delivery cross-platform and skips unsupported system delivery", () => {
+	it("does not notify on platforms without native system delivery", () => {
 		const h = harness("linux");
 		h.notifier.runStarted();
 		h.notifier.turnSettled(settled);
 
-		expect(h.terminal).toHaveBeenCalledOnce();
 		expect(h.spawn).not.toHaveBeenCalled();
 	});
 
 	it("silently absorbs system spawn failures", () => {
-		const terminal = vi.fn();
 		const notifier = createCompletionNotifier({
 			platform: "darwin",
-			terminal,
 			isEnabled: () => true,
 			spawn: () => {
 				throw new Error("unavailable");
@@ -165,6 +157,5 @@ describe("completion notifier", () => {
 		notifier.runStarted();
 
 		expect(() => notifier.turnSettled(settled)).not.toThrow();
-		expect(terminal).toHaveBeenCalledOnce();
 	});
 });

@@ -102,7 +102,7 @@ The default shortcut is `alt+a`. The menu contains:
 - **Display** — switch presets and save user defaults
 - **Session** — inspect, rename, or compact the current session
 - **Sidebar** — show or hide the docked information rail and expand or collapse tool-name details
-- **Completion notifications** — enable or disable terminal and supported system notifications
+- **Completion notifications** — enable or disable native system notifications on macOS and Windows
 
 Additional commands:
 
@@ -131,7 +131,9 @@ The scan-first hierarchy leads with agent state and model, followed by a compact
 
 Completion notifications are enabled by default and are event-driven rather than time-based. Atelier notifies when Pi reaches `agent_settled`, meaning no automatic retry, compaction retry, or queued continuation remains. When `@juicesharp/rpiv-ask-user-question` is installed, Atelier also listens to its stable blocked-state event and notifies only after its questionnaire is actually waiting for an answer. Notifications contain only project, session, and operational status; prompt and assistant-response content is never included.
 
-Every supported interactive terminal receives a non-blocking Pi UI notification. macOS and Windows also receive a best-effort native system notification through `osascript` or PowerShell. Other platforms retain the terminal notification. Native notification processes are detached, time-bounded, and silently degrade to terminal delivery if unavailable.
+macOS and Windows receive best-effort native system notifications through `osascript` or PowerShell. Other platforms do not receive completion notifications. Native notification processes are detached, time-bounded, and fail silently if unavailable; Atelier does not add a Terminal notification or fallback.
+
+On macOS, `osascript` notifications are attributed to Script Editor. They respect the user's Script Editor notification settings and active Focus modes, so users may need to allow Script Editor notifications or add it to the active Focus mode's allowed apps.
 
 Use `/atelier` or `alt+a` to disable or re-enable completion notifications. The preference is saved to user configuration.
 

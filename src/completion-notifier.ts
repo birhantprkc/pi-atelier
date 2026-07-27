@@ -25,7 +25,6 @@ export type SpawnNotificationProcess = (
 
 export interface CompletionNotifierOptions {
 	isEnabled(): boolean;
-	terminal(message: string, level: "info"): void;
 	platform?: NodeJS.Platform;
 	spawn?: SpawnNotificationProcess;
 }
@@ -70,7 +69,6 @@ export function createCompletionNotifier(options: CompletionNotifierOptions): Co
 		if (!options.isEnabled()) return;
 		const title = formatTitle(notification);
 		const body = formatBody(notification);
-		options.terminal(body, "info");
 		let cancel: (() => void) | undefined;
 		cancel = deliverSystemNotification(platform, spawn, title, body, () => {
 			if (cancel) pendingSystemNotifications.delete(cancel);
@@ -179,7 +177,7 @@ function spawnDetached(
 				try {
 					child.kill();
 				} catch {
-					// System notifications are best effort and always retain terminal delivery.
+					// System notifications are best effort and fail silently.
 				}
 			}
 			onFinished();
@@ -191,7 +189,7 @@ function spawnDetached(
 		timer.unref?.();
 		return () => finish(true);
 	} catch {
-		// System notifications are best effort and always retain terminal delivery.
+		// System notifications are best effort and fail silently.
 		return undefined;
 	}
 }

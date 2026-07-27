@@ -16,7 +16,7 @@ const gitResult = (branch: string) => ({
 	killed: false,
 });
 
-function harness(mode: "tui" | "print" = "tui") {
+function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Platform = "linux") {
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	const commands = new Map<string, any>();
 	const eventBusHandlers = new Map<string, Set<(data: unknown) => void>>();
@@ -116,7 +116,18 @@ function harness(mode: "tui" | "print" = "tui") {
 	};
 	const saveConfig = vi.fn().mockResolvedValue(undefined);
 	const saveConfigPatch = vi.fn().mockResolvedValue(undefined);
-	atelierExtension(pi as never, { saveConfig, saveConfigPatch, notificationPlatform: "linux" });
+	const notificationProcess = {
+		kill: vi.fn(() => true),
+		once: vi.fn().mockReturnThis(),
+		unref: vi.fn(),
+	};
+	const spawnNotificationProcess = vi.fn(() => notificationProcess);
+	atelierExtension(pi as never, {
+		saveConfig,
+		saveConfigPatch,
+		notificationPlatform,
+		spawnNotificationProcess,
+	});
 	return {
 		handlers,
 		commands,
@@ -131,6 +142,8 @@ function harness(mode: "tui" | "print" = "tui") {
 		baseRender,
 		saveConfig,
 		saveConfigPatch,
+		spawnNotificationProcess,
+		notificationProcess,
 		get terminalInput() {
 			return terminalInput;
 		},
@@ -440,15 +453,15 @@ describe("extension registration", () => {
 		expect(text).not.toContain("grep");
 	});
 
-	it("notifies when a turn settles and suppresses duplicate settled events", async () => {
-		const h = harness();
+	it("sends only one native notification when a turn settles", async () => {
+		const h = harness("tui", "darwin");
 		await start(h);
 		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
 		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
 		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
 
-		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
-		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Turn settled · Test session", "info");
+		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(1);
+		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
 	it("does not notify settlement when another extension has already started a run", async () => {
@@ -461,8 +474,8 @@ describe("extension registration", () => {
 		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
-	it("notifies once for each actual ask-user blocked interval", async () => {
-		const h = harness();
+	it("sends one native notification for each actual ask-user blocked interval", async () => {
+		const h = harness("tui", "darwin");
 		await start(h);
 		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
 
@@ -471,24 +484,24 @@ describe("extension registration", () => {
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
 
-		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(2);
-		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Input requested · Test session", "info");
+		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(2);
+		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
 	});
 
 	it("replaces and removes the ask-user blocked listener with the session lifecycle", async () => {
-		const h = harness();
+		const h = harness("tui", "darwin");
 		await start(h);
 		const currentCtx = replacementContext(h.ctx, "Replacement session");
 		await start(h, currentCtx);
 		await h.handlers.get("agent_start")?.({ type: "agent_start" }, currentCtx);
 
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
-		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
+		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(1);
 
 		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, currentCtx);
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
-		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
+		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(1);
 	});
 
 	it("forwards run and turn events into sidebar activity without putting tool history in the footer", async () => {
