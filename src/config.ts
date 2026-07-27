@@ -137,6 +137,7 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 	const user = await readJson(options.userPath);
 	const project = options.projectTrusted ? await readJson(options.projectPath) : {};
 	const result = mergeConfig(user.value, project.value, options.session);
+	result.config.completionNotifications = validateConfig(user.value).config.completionNotifications;
 	return {
 		config: result.config,
 		warnings: [

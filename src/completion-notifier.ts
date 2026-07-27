@@ -6,7 +6,6 @@ export interface CompletionNotification {
 	kind: CompletionNotificationKind;
 	projectName: string;
 	sessionName?: string;
-	durationMs?: number;
 	completedToolCount?: number;
 	failedToolCount?: number;
 }
@@ -60,7 +59,6 @@ const defaultSpawn: SpawnNotificationProcess = (command, args, options) => nodeS
 export function createCompletionNotifier(options: CompletionNotifierOptions): CompletionNotifier {
 	const platform = options.platform ?? process.platform;
 	const spawn = options.spawn ?? defaultSpawn;
-	let runActive = false;
 	let settledNotified = false;
 	let inputRequests = new Set<string>();
 	const pendingSystemNotifications = new Set<() => void>();
@@ -78,24 +76,21 @@ export function createCompletionNotifier(options: CompletionNotifierOptions): Co
 
 	return {
 		runStarted() {
-			runActive = true;
 			settledNotified = false;
 			inputRequests = new Set<string>();
 		},
 		inputRequested(toolCallId, notification) {
 			const id = sanitize(toolCallId, 160);
-			if (!runActive || id.length === 0 || inputRequests.has(id)) return;
+			if (id.length === 0 || inputRequests.has(id)) return;
 			inputRequests.add(id);
 			deliver({ ...notification, kind: "input-requested" });
 		},
 		turnSettled(notification) {
-			if (!runActive || settledNotified) return;
+			if (settledNotified) return;
 			settledNotified = true;
-			runActive = false;
 			deliver({ ...notification, kind: "turn-settled" });
 		},
 		reset() {
-			runActive = false;
 			settledNotified = false;
 			inputRequests = new Set<string>();
 			for (const cancel of pendingSystemNotifications) cancel();

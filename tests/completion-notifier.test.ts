@@ -16,7 +16,6 @@ const settled: CompletionNotification = {
 	kind: "turn-settled",
 	projectName: "pi-atelier",
 	sessionName: "Notification work",
-	durationMs: 3_200,
 	completedToolCount: 2,
 	failedToolCount: 1,
 };
@@ -37,7 +36,7 @@ describe("completion notifier", () => {
 	it("delivers one macOS system notification when a run settles without a duration threshold", () => {
 		const h = harness("darwin");
 		h.notifier.runStarted();
-		h.notifier.turnSettled({ ...settled, durationMs: 0 });
+		h.notifier.turnSettled(settled);
 		h.notifier.turnSettled(settled);
 
 		expect(h.spawn).toHaveBeenCalledOnce();
@@ -56,6 +55,28 @@ describe("completion notifier", () => {
 		h.notifier.inputRequested("question-2", notification);
 
 		expect(h.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it("delivers an authoritative settlement event even when agent_start was not observed", () => {
+		const h = harness("darwin");
+
+		h.notifier.turnSettled(settled);
+		h.notifier.turnSettled(settled);
+
+		expect(h.spawn).toHaveBeenCalledOnce();
+	});
+
+	it("delivers and deduplicates input requests even when agent_start was not observed", () => {
+		const h = harness("darwin");
+		const notification: CompletionNotification = {
+			kind: "input-requested",
+			projectName: "pi-atelier",
+		};
+
+		h.notifier.inputRequested("question-1", notification);
+		h.notifier.inputRequested("question-1", notification);
+
+		expect(h.spawn).toHaveBeenCalledOnce();
 	});
 
 	it("does nothing while completion notifications are disabled", () => {

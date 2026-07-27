@@ -41,6 +41,26 @@ describe("configuration", () => {
 		});
 	});
 
+	it("keeps completion notifications as a global user preference", async () => {
+		await writeJson(userPath, { completionNotifications: false });
+		await writeJson(projectPath, { completionNotifications: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { completionNotifications: true },
+		});
+
+		expect(result.config.completionNotifications).toBe(false);
+	});
+
+	it("does not let project configuration disable default-on completion notifications", async () => {
+		await writeJson(projectPath, { completionNotifications: false });
+		const result = await loadConfig({ userPath, projectPath, projectTrusted: true });
+
+		expect(result.config.completionNotifications).toBe(true);
+	});
+
 	it("does not read untrusted project configuration", async () => {
 		await writeJson(projectPath, { preset: "minimal" });
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });

@@ -148,7 +148,6 @@ export default function atelierExtension(
 			kind,
 			projectName: basename(ctx.cwd),
 			...(sessionName ? { sessionName } : {}),
-			...(snapshot?.durationMs === undefined ? {} : { durationMs: snapshot.durationMs }),
 			...(snapshot === undefined ? {} : { completedToolCount: snapshot.completedCount }),
 			...(snapshot === undefined ? {} : { failedToolCount: snapshot.failedCount }),
 		};
