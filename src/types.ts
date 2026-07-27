@@ -16,6 +16,7 @@ export interface AtelierConfig {
 	showExtensionStatuses: boolean;
 	showSessionActions: boolean;
 	showSidebarToolNames: boolean;
+	completionNotifications: boolean;
 }
 
 export interface AtelierMetrics {
@@ -58,4 +59,5 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	showExtensionStatuses: true,
 	showSessionActions: true,
 	showSidebarToolNames: false,
+	completionNotifications: true,
 };

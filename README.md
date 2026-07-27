@@ -38,6 +38,7 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
 - Session-scoped, non-capturing docked information rail with live run, turn, and tool activity
+- Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
 - User and trusted-project configuration
 - No telemetry or external network requests
@@ -101,6 +102,7 @@ The default shortcut is `alt+a`. The menu contains:
 - **Display** — switch presets and save user defaults
 - **Session** — inspect, rename, or compact the current session
 - **Sidebar** — show or hide the docked information rail and expand or collapse tool-name details
+- **Completion notifications** — enable or disable terminal and supported system notifications
 
 Additional commands:
 
@@ -125,6 +127,14 @@ You can also press `alt+a` to access separate sidebar visibility and tool-detail
 
 The scan-first hierarchy leads with agent state and model, followed by a compact segmented context meter and a merged workspace summary. Below 40 sidebar columns, a unified compact mode stacks Agent and Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
 
+## Completion notifications
+
+Completion notifications are enabled by default and are event-driven rather than time-based. Atelier notifies when Pi reaches `agent_settled`, meaning no automatic retry, compaction retry, or queued continuation remains. When `@juicesharp/rpiv-ask-user-question` is installed, Atelier also listens to its stable blocked-state event and notifies only after its questionnaire is actually waiting for an answer. Notifications contain only project, session, and operational status; prompt and assistant-response content is never included.
+
+Every supported interactive terminal receives a non-blocking Pi UI notification. macOS and Windows also receive a best-effort native system notification through `osascript` or PowerShell. Other platforms retain the terminal notification. Native notification processes are detached, time-bounded, and silently degrade to terminal delivery if unavailable.
+
+Use `/atelier` or `alt+a` to disable or re-enable completion notifications. The preference is saved to user configuration.
+
 During an agent run, the sidebar adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. The footer remains a stable one-line status rail and never repeats tool names or tool history.
 
 The sidebar uses a non-overlapping split presentation: Pi's workspace reflows into the columns to the left of the rail instead of rendering underneath it. It starts at 44 columns, can be resized between 28 and 72 columns, always preserves at least 64 columns for Pi, and auto-hides below 92 terminal columns.
@@ -147,7 +157,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. The sidebar tool-detail toggle is saved immediately so its expanded/collapsed state survives future sessions. Pi Atelier never modifies project configuration from the menu.
+Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details and completion notifications are saved immediately so those preferences survive future sessions. Pi Atelier never modifies project configuration from the menu.
 
 Complete example:
 
@@ -172,7 +182,8 @@ Complete example:
   "currencyDecimals": 3,
   "showExtensionStatuses": true,
   "showSessionActions": true,
-  "showSidebarToolNames": false
+  "showSidebarToolNames": false,
+  "completionNotifications": true
 }
 ```
 
@@ -192,10 +203,12 @@ The Status Rail removes optional information by priority as the terminal narrows
 
 Pi Atelier:
 
-- Performs no telemetry, analytics, or network calls
+- Performs no telemetry, analytics, or external network calls
 - Does not store prompts, responses, credentials, or session content
+- Never includes prompt or assistant-response content in completion notifications
 - Reads structured usage metadata already available inside Pi
 - Executes local `git status --short --branch --untracked-files=no` after relevant events to show tracked dirty state
+- Invokes `osascript` on macOS or PowerShell on Windows for enabled best-effort system notifications
 - Reads project configuration only when Pi reports the project as trusted
 
 ## Footer conflicts

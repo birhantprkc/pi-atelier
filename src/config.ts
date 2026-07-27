@@ -100,7 +100,12 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 			config.currencyDecimals = input.currencyDecimals;
 		} else warnings.push("currencyDecimals must be an integer from 0 through 6");
 	}
-	for (const key of ["showExtensionStatuses", "showSessionActions", "showSidebarToolNames"] as const) {
+	for (const key of [
+		"showExtensionStatuses",
+		"showSessionActions",
+		"showSidebarToolNames",
+		"completionNotifications",
+	] as const) {
 		if (typeof input[key] === "boolean") config[key] = input[key];
 		else if (key in input) warnings.push(`${key} must be boolean`);
 	}
@@ -143,10 +148,29 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 }
 
 export async function saveUserConfig(path: string, config: AtelierConfig): Promise<void> {
+	await writeJsonAtomic(path, config);
+}
+
+export async function saveUserConfigPatch(path: string, patch: Partial<AtelierConfig>): Promise<void> {
+	let current: Record<string, unknown> = {};
+	try {
+		const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+		if (!isRecord(parsed)) throw new Error("User configuration must be a JSON object");
+		current = parsed;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+	await writeJsonAtomic(path, { ...current, ...patch });
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	const temporaryPath = `${path}.${process.pid}.tmp`;
 	try {
-		await writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+		await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
+			encoding: "utf8",
+			mode: 0o600,
+		});
 		await rename(temporaryPath, path);
 	} finally {
 		await rm(temporaryPath, { force: true }).catch(() => undefined);

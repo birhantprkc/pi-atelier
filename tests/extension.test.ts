@@ -19,6 +19,7 @@ const gitResult = (branch: string) => ({
 function harness(mode: "tui" | "print" = "tui") {
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	const commands = new Map<string, any>();
+	const eventBusHandlers = new Map<string, Set<(data: unknown) => void>>();
 	const shortcuts: string[] = [];
 	const shortcutHandlers = new Map<string, (ctx: any) => Promise<void> | void>();
 	const setFooter = vi.fn();
@@ -35,6 +36,17 @@ function harness(mode: "tui" | "print" = "tui") {
 	}> = [];
 	const pi = {
 		on: vi.fn((name: string, handler: (...args: any[]) => unknown) => handlers.set(name, handler)),
+		events: {
+			on: vi.fn((channel: string, handler: (data: unknown) => void) => {
+				const channelHandlers = eventBusHandlers.get(channel) ?? new Set();
+				channelHandlers.add(handler);
+				eventBusHandlers.set(channel, channelHandlers);
+				return () => channelHandlers.delete(handler);
+			}),
+			emit: vi.fn((channel: string, data: unknown) => {
+				for (const handler of eventBusHandlers.get(channel) ?? []) handler(data);
+			}),
+		},
 		registerCommand: vi.fn((name: string, options: any) => commands.set(name, options)),
 		registerShortcut: vi.fn((key: string, options: any) => {
 			shortcuts.push(key);
@@ -81,6 +93,7 @@ function harness(mode: "tui" | "print" = "tui") {
 		mode,
 		cwd: "/tmp/project",
 		isProjectTrusted: vi.fn().mockReturnValue(false),
+		isIdle: vi.fn().mockReturnValue(true),
 		getContextUsage: vi.fn().mockReturnValue({ tokens: 10, contextWindow: 100, percent: 10 }),
 		model: undefined,
 		modelRegistry: { isUsingOAuth: vi.fn().mockReturnValue(false) },
@@ -102,7 +115,8 @@ function harness(mode: "tui" | "print" = "tui") {
 		},
 	};
 	const saveConfig = vi.fn().mockResolvedValue(undefined);
-	atelierExtension(pi as never, { saveConfig });
+	const saveConfigPatch = vi.fn().mockResolvedValue(undefined);
+	atelierExtension(pi as never, { saveConfig, saveConfigPatch, notificationPlatform: "linux" });
 	return {
 		handlers,
 		commands,
@@ -116,6 +130,7 @@ function harness(mode: "tui" | "print" = "tui") {
 		terminalWrite,
 		baseRender,
 		saveConfig,
+		saveConfigPatch,
 		get terminalInput() {
 			return terminalInput;
 		},
@@ -423,6 +438,57 @@ describe("extension registration", () => {
 		expect(text).not.toContain("read");
 		expect(text).not.toContain("write");
 		expect(text).not.toContain("grep");
+	});
+
+	it("notifies when a turn settles and suppresses duplicate settled events", async () => {
+		const h = harness();
+		await start(h);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+
+		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Turn settled · Test session", "info");
+	});
+
+	it("does not notify settlement when another extension has already started a run", async () => {
+		const h = harness();
+		await start(h);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+		h.ctx.isIdle.mockReturnValue(false);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+
+		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
+	});
+
+	it("notifies once for each actual ask-user blocked interval", async () => {
+		const h = harness();
+		await start(h);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+
+		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(2);
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Input requested · Test session", "info");
+	});
+
+	it("replaces and removes the ask-user blocked listener with the session lifecycle", async () => {
+		const h = harness();
+		await start(h);
+		const currentCtx = replacementContext(h.ctx, "Replacement session");
+		await start(h, currentCtx);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, currentCtx);
+
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
+
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, currentCtx);
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		expect(h.ctx.ui.notify).toHaveBeenCalledTimes(1);
 	});
 
 	it("forwards run and turn events into sidebar activity without putting tool history in the footer", async () => {
