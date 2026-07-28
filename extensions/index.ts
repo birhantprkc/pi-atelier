@@ -1,6 +1,7 @@
 import { basename, join } from "node:path";
 import {
 	CONFIG_DIR_NAME,
+	estimateTokens,
 	type ExtensionAPI,
 	type ExtensionContext,
 	getAgentDir,
@@ -425,6 +426,7 @@ export default function atelierExtension(
 			}
 			if (enabled && isFresh()) {
 				installFooter(initializationContext, candidateRuntime, initializationGeneration);
+				localSidebar.show();
 			}
 		} catch (error) {
 			localSidebar?.dispose();
@@ -469,6 +471,18 @@ export default function atelierExtension(
 		if (!current?.runActivity) return;
 		current.runActivity.startTurn(event.turnIndex);
 		completionNotifier?.runStarted();
+	});
+	pi.on("before_provider_request", (_event, ctx) => {
+		getCurrentContextState(ctx)?.runActivity?.startResponse();
+	});
+	pi.on("message_update", (event, ctx) => {
+		const estimatedOutputTokens = estimateTokens(event.message);
+		if (estimatedOutputTokens <= 0) return;
+		getCurrentContextState(ctx)?.runActivity?.updateResponseEstimate(estimatedOutputTokens);
+	});
+	pi.on("message_end", (event, ctx) => {
+		if (event.message.role !== "assistant") return;
+		getCurrentContextState(ctx)?.runActivity?.finishResponse(event.message.usage.output);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
 		const current = getCurrentContextState(ctx);

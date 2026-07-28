@@ -196,11 +196,9 @@ describe("extension registration", () => {
 		expect(h.setFooter).not.toHaveBeenCalled();
 	});
 
-	it("starts disabled and toggles the persistent sidebar off -> on -> off", async () => {
+	it("starts enabled and toggles the persistent sidebar on -> off -> on", async () => {
 		const h = harness();
 		await start(h);
-		expect(h.custom).not.toHaveBeenCalled();
-		await command(h, "sidebar");
 		expect(h.overlays).toHaveLength(1);
 		expect(h.overlays[0]?.options).toMatchObject({
 			overlay: true,
@@ -210,7 +208,8 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.options.overlayOptions()).toMatchObject({ nonCapturing: true });
 		await command(h, "sidebar");
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
-		expect(h.custom).toHaveBeenCalledTimes(1);
+		await command(h, "sidebar");
+		expect(h.custom).toHaveBeenCalledTimes(2);
 	});
 
 	it("supports idempotent sidebar on and off commands", async () => {
@@ -252,7 +251,7 @@ describe("extension registration", () => {
 		await start(h);
 		await command(h, args);
 		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Usage: /atelier sidebar [on|off]", "warning");
-		expect(h.custom).not.toHaveBeenCalled();
+		expect(h.custom).toHaveBeenCalledOnce();
 	});
 
 	it("warns for invalid sidebar tool-list syntax", async () => {
@@ -279,17 +278,17 @@ describe("extension registration", () => {
 		const h = harness();
 		await start(h);
 		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
+		expect(h.terminalWrite).toHaveBeenCalledWith("\u001b[?1002h\u001b[?1006h");
+
+		await command(h, "sidebar off");
+		h.terminalWrite.mockClear();
+		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
 		expect(h.terminalWrite).not.toHaveBeenCalled();
 		expect(h.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("sidebar"), "warning");
-
-		await command(h, "sidebar on");
-		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
-		expect(h.terminalWrite).toHaveBeenCalledWith("\u001b[?1002h\u001b[?1006h");
 
 		const staleCtx = h.ctx;
 		const currentCtx = replacementContext(h.ctx, "Replacement session");
 		await start(h, currentCtx);
-		await command(h, "sidebar on", currentCtx);
 		const writeCount = h.terminalWrite.mock.calls.length;
 		await h.shortcutHandlers.get("ctrl+shift+r")?.(staleCtx);
 		expect(h.terminalWrite).toHaveBeenCalledTimes(writeCount);
@@ -363,17 +362,27 @@ describe("extension registration", () => {
 		expect(h.setFooter).toHaveBeenCalledOnce();
 	});
 
-	it("closes the old sidebar and starts the replacement hidden on session reload", async () => {
+	it("closes the old sidebar and starts the replacement visible on session reload", async () => {
 		const h = harness();
 		await start(h);
-		await command(h, "sidebar on");
 
 		await start(h);
 
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
-		expect(h.custom).toHaveBeenCalledOnce();
-		await command(h, "sidebar on");
 		expect(h.custom).toHaveBeenCalledTimes(2);
+		expect(h.overlays[1]?.done).not.toHaveBeenCalled();
+	});
+
+	it("reopens by default on reload after an explicit session-scoped close", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar off");
+		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
+
+		await start(h);
+
+		expect(h.custom).toHaveBeenCalledTimes(2);
+		expect(h.overlays[1]?.done).not.toHaveBeenCalled();
 	});
 
 	it("passes command state to the menu controller", async () => {
@@ -565,6 +574,61 @@ describe("extension registration", () => {
 		expect(footerText).not.toContain("npm test");
 	});
 
+	it("measures TTFT from provider dispatch and final TPS from streamed generation", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_000);
+		try {
+			const h = harness();
+			await start(h);
+			await command(h, "sidebar on");
+			await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+
+			vi.setSystemTime(1_100);
+			await h.handlers.get("before_provider_request")?.(
+				{ type: "before_provider_request", payload: {} },
+				h.ctx,
+			);
+			vi.setSystemTime(1_920);
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "thinking", thinking: "token" }] },
+					assistantMessageEvent: { type: "thinking_delta", delta: "token" },
+				},
+				h.ctx,
+			);
+
+			const streamingText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(streamingText).toContain("TTFT 820ms · TPS ~");
+
+			vi.setSystemTime(2_920);
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: "x".repeat(80) }] },
+					assistantMessageEvent: { type: "text_delta", delta: "more output" },
+				},
+				h.ctx,
+			);
+			const estimatedText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(estimatedText).toContain("TTFT 820ms · TPS ~20.0");
+
+			vi.setSystemTime(4_420);
+			await h.handlers.get("message_end")?.(
+				{
+					type: "message_end",
+					message: { role: "assistant", usage: { output: 120 } },
+				},
+				h.ctx,
+			);
+
+			const completedText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(completedText).toContain("TTFT 820ms · TPS 48.0");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it("updates recent tool results and settles the sidebar without continuing animation", async () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1_000);
@@ -641,7 +705,8 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		await command(h, "sidebar on");
 		const replacementText = h.overlays[1]?.component.render(44).join("\n") ?? "";
-		expect(replacementText).not.toContain("ACTIVITY");
+		expect(replacementText).toContain("ACTIVITY");
+		expect(replacementText).toContain("TTFT ~ · TPS ~");
 		expect(replacementText).not.toContain("old.ts");
 
 		const replacementRenderCount = h.overlays[1]?.requestRender.mock.calls.length ?? 0;

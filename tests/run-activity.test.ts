@@ -32,6 +32,67 @@ describe("run activity tracker transitions", () => {
 		expect(onChange).toHaveBeenCalledTimes(3);
 	});
 
+	it("tracks TTFT immediately and adds accurate generation TPS only when a response ends", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startRun(0);
+		tracker.startResponse(1_000);
+
+		tracker.recordFirstToken(1_820);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 820 });
+
+		tracker.finishResponse(120, 4_320);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 820, tokensPerSecond: 48 });
+	});
+
+	it("updates estimated TPS during streaming and replaces it with final throughput", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startResponse(1_000);
+		tracker.updateResponseEstimate(1, 1_800);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 800 });
+
+		tracker.updateResponseEstimate(40, 2_800);
+		expect(tracker.getSnapshot().performance).toEqual({
+			ttftMs: 800,
+			tokensPerSecond: 40,
+			estimated: true,
+		});
+
+		tracker.finishResponse(120, 4_300);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 800, tokensPerSecond: 48 });
+	});
+
+	it("clears prior response performance at the next provider request", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startRun(0);
+		tracker.startResponse(1_000);
+		tracker.recordFirstToken(1_500);
+		tracker.finishResponse(20, 2_500);
+
+		tracker.startResponse(3_000);
+
+		expect(tracker.getSnapshot()).not.toHaveProperty("performance");
+	});
+
+	it("keeps TTFT without inventing TPS when final usage or generation duration is invalid", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startResponse(1_000);
+		tracker.recordFirstToken(1_500);
+		tracker.finishResponse(Number.NaN, 2_000);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 500 });
+
+		tracker.startResponse(3_000);
+		tracker.recordFirstToken(3_500);
+		tracker.finishResponse(10, 3_500);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 500 });
+	});
+
+	it("ignores first-token observations when no provider request is active", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.recordFirstToken(1_000);
+		tracker.finishResponse(10, 2_000);
+		expect(tracker.getSnapshot()).not.toHaveProperty("performance");
+	});
+
 	it("preserves parallel active tool insertion order", () => {
 		const tracker = createRunActivityTracker({ cwd: "/repo" });
 		tracker.startRun(0);
@@ -189,6 +250,9 @@ describe("run activity tracker transitions", () => {
 			{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "/repo/a.ts" } },
 			2_000,
 		);
+		tracker.startResponse(2_500);
+		tracker.recordFirstToken(2_750);
+		tracker.finishResponse(20, 3_750);
 		tracker.reset();
 
 		expect(tracker.getSnapshot()).toEqual(EMPTY_RUN_ACTIVITY);
@@ -206,6 +270,9 @@ describe("run activity tracker transitions", () => {
 			{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: {}, isError: false },
 			3_000,
 		);
+		tracker.startResponse(3_500);
+		tracker.recordFirstToken(4_000);
+		tracker.finishResponse(20, 5_000);
 
 		tracker.startRun(10_000);
 
@@ -219,6 +286,7 @@ describe("run activity tracker transitions", () => {
 			failedCount: 0,
 		});
 		expect(snapshot).not.toHaveProperty("turnNumber");
+		expect(snapshot).not.toHaveProperty("performance");
 	});
 
 	it("returns frozen snapshots with isolated arrays and cloned tool records", () => {

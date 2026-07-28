@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep fixed TTFT and TPS rows in the always-visible Activity panel, using `~` placeholders before values are available and `~`-marked live TPS estimates corrected from final usage when each response ends.
+- Start the session-scoped sidebar shown whenever Pi Atelier initializes, while preserving explicit on/off controls and narrow-terminal auto-hiding.
+
 ## 0.4.0 — 2026-07-27
 
 - Add best-effort native completion notifications on macOS and Windows when a Pi turn settles or the explicit ask-user tool requests input; failures remain silent without a Terminal fallback.
