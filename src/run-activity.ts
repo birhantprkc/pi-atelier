@@ -12,11 +12,18 @@ export interface ToolActivity {
 	durationMs?: number;
 }
 
+export interface ResponsePerformance {
+	ttftMs: number;
+	tokensPerSecond?: number;
+	estimated?: true;
+}
+
 export interface RunActivitySnapshot {
 	phase: "idle" | "running" | "settled";
 	turnNumber?: number;
 	startedAt?: number;
 	durationMs?: number;
+	performance?: ResponsePerformance;
 	activeTools: readonly ToolActivity[];
 	recentTools: readonly ToolActivity[];
 	completedCount: number;
@@ -41,6 +48,10 @@ export interface ToolExecutionEndEvent {
 export interface RunActivityTracker {
 	startRun(now?: number): void;
 	startTurn(turnIndex: number): void;
+	startResponse(now?: number): void;
+	recordFirstToken(now?: number): void;
+	updateResponseEstimate(estimatedOutputTokens: number, now?: number): void;
+	finishResponse(outputTokens: number, now?: number): void;
 	startTool(event: ToolExecutionStartEvent, now?: number): void;
 	finishTool(event: ToolExecutionEndEvent, now?: number): void;
 	settle(now?: number): void;
@@ -110,6 +121,9 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 	private turnNumber: number | undefined;
 	private startedAt: number | undefined;
 	private durationMs: number | undefined;
+	private requestStartedAt: number | undefined;
+	private firstTokenAt: number | undefined;
+	private performance: ResponsePerformance | undefined;
 	private activeTools = new Map<string, ToolActivity>();
 	private recentTools: ToolActivity[] = [];
 	private completedCount = 0;
@@ -127,6 +141,9 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.turnNumber = undefined;
 		this.startedAt = normalizeTimestamp(now ?? Date.now());
 		this.durationMs = undefined;
+		this.requestStartedAt = undefined;
+		this.firstTokenAt = undefined;
+		this.performance = undefined;
 		this.activeTools = new Map<string, ToolActivity>();
 		this.recentTools = [];
 		this.completedCount = 0;
@@ -141,6 +158,65 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.phase = "running";
 		this.turnNumber = nextTurnNumber;
 		this.durationMs = undefined;
+		this.notify();
+	}
+
+	startResponse(now?: number): void {
+		this.requestStartedAt = normalizeTimestamp(now ?? Date.now());
+		this.firstTokenAt = undefined;
+		this.performance = undefined;
+		this.notify();
+	}
+
+	recordFirstToken(now?: number): void {
+		if (this.requestStartedAt === undefined || this.firstTokenAt !== undefined) return;
+		this.firstTokenAt = normalizeTimestamp(now ?? Date.now());
+		this.performance = freezePerformance({
+			ttftMs: Math.max(0, this.firstTokenAt - this.requestStartedAt),
+		});
+		this.notify();
+	}
+
+	updateResponseEstimate(estimatedOutputTokens: number, now?: number): void {
+		if (
+			this.requestStartedAt === undefined ||
+			!Number.isFinite(estimatedOutputTokens) ||
+			estimatedOutputTokens <= 0
+		) {
+			return;
+		}
+		const observedAt = normalizeTimestamp(now ?? Date.now());
+		if (this.firstTokenAt === undefined) {
+			this.firstTokenAt = observedAt;
+			this.performance = freezePerformance({
+				ttftMs: Math.max(0, observedAt - this.requestStartedAt),
+			});
+			this.notify();
+			return;
+		}
+
+		const generationDurationMs = Math.max(0, observedAt - this.firstTokenAt);
+		if (generationDurationMs <= 0 || this.performance === undefined) return;
+		this.performance = freezePerformance({
+			...this.performance,
+			tokensPerSecond: estimatedOutputTokens / (generationDurationMs / 1_000),
+			estimated: true,
+		});
+		this.notify();
+	}
+
+	finishResponse(outputTokens: number, now?: number): void {
+		const firstTokenAt = this.firstTokenAt;
+		this.requestStartedAt = undefined;
+		this.firstTokenAt = undefined;
+		if (firstTokenAt === undefined || this.performance === undefined) return;
+
+		const generationDurationMs = Math.max(0, normalizeTimestamp(now ?? Date.now()) - firstTokenAt);
+		if (!Number.isFinite(outputTokens) || outputTokens <= 0 || generationDurationMs <= 0) return;
+		this.performance = freezePerformance({
+			ttftMs: this.performance.ttftMs,
+			tokensPerSecond: outputTokens / (generationDurationMs / 1_000),
+		});
 		this.notify();
 	}
 
@@ -213,6 +289,9 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.turnNumber = undefined;
 		this.startedAt = undefined;
 		this.durationMs = undefined;
+		this.requestStartedAt = undefined;
+		this.firstTokenAt = undefined;
+		this.performance = undefined;
 		this.activeTools = new Map<string, ToolActivity>();
 		this.recentTools = [];
 		this.completedCount = 0;
@@ -232,6 +311,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 			...(this.turnNumber === undefined ? {} : { turnNumber: this.turnNumber }),
 			...(this.startedAt === undefined ? {} : { startedAt: this.startedAt }),
 			...(this.durationMs === undefined ? {} : { durationMs: this.durationMs }),
+			...(this.performance === undefined ? {} : { performance: freezePerformance(this.performance) }),
 			activeTools,
 			recentTools,
 			completedCount: this.completedCount,
@@ -250,6 +330,9 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 			this.turnNumber === undefined &&
 			this.startedAt === undefined &&
 			this.durationMs === undefined &&
+			this.requestStartedAt === undefined &&
+			this.firstTokenAt === undefined &&
+			this.performance === undefined &&
 			this.activeTools.size === 0 &&
 			this.recentTools.length === 0 &&
 			this.completedCount === 0 &&
@@ -261,6 +344,10 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 function normalizeTimestamp(value: number): number {
 	if (!Number.isFinite(value)) return 0;
 	return Math.max(0, Math.trunc(value));
+}
+
+function freezePerformance(performance: ResponsePerformance): ResponsePerformance {
+	return Object.freeze({ ...performance });
 }
 
 function freezeTool(tool: ToolActivity): ToolActivity {

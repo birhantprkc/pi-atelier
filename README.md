@@ -37,7 +37,7 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Searchable tool controls
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
-- Session-scoped, non-capturing docked information rail with live run, turn, and tool activity
+- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, and response-performance activity
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
 - User and trusted-project configuration
@@ -113,7 +113,7 @@ Additional commands:
 
 ## Sidebar
 
-The sidebar starts hidden in every session. Use these commands to control it explicitly:
+The sidebar starts shown whenever the extension initializes. An explicit `off` applies only to the current runtime; `/reload` restores the default shown state. Use these commands to control it explicitly:
 
 ```text
 /atelier sidebar       # toggle between shown and hidden
@@ -137,7 +137,7 @@ On macOS, `osascript` notifications are attributed to Script Editor. They respec
 
 Use `/atelier` or `alt+a` to disable or re-enable completion notifications. The preference is saved to user configuration.
 
-During an agent run, the sidebar adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. The footer remains a stable one-line status rail and never repeats tool names or tool history.
+The Activity panel always reserves fixed rows for the run summary and response performance. Before a value is available it displays `TTFT ~ · TPS ~`, so those metrics never shift position or disappear as requests start or terminal height changes. During an agent run, the sidebar also adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. TTFT runs from provider request dispatch to the first generated response content. During streaming, TPS updates from Pi's conservative output-token estimate and carries a `~` marker; after the response ends, final output usage replaces the estimate and removes the marker. The footer remains a stable one-line status rail and never repeats tool names, tool history, or response-performance metrics.
 
 The sidebar uses a non-overlapping split presentation: Pi's workspace reflows into the columns to the left of the rail instead of rendering underneath it. It starts at 44 columns, can be resized between 28 and 72 columns, always preserves at least 64 columns for Pi, and auto-hides below 92 terminal columns.
 

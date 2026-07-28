@@ -445,6 +445,7 @@ function statusDetailRows(snapshot: SidebarSnapshot, palette: AtelierPalette): s
 
 interface ActivityGroups {
 	core: string[];
+	active: Array<{ id: string; row: string }>;
 	recent: Array<{ id: string; row: string }>;
 	aggregate: string[];
 }
@@ -536,6 +537,7 @@ function toolActivityRow(
 }
 
 function runSummaryRow(activity: RunActivitySnapshot, palette: AtelierPalette, now: number): string {
+	if (activity.phase === "idle") return palette.paint("ready", "Ready");
 	const duration =
 		activity.phase === "settled"
 			? formatDuration(activity.durationMs ?? Math.max(0, now - (activity.startedAt ?? now)))
@@ -548,33 +550,40 @@ function runSummaryRow(activity: RunActivitySnapshot, palette: AtelierPalette, n
 	return palette.paint(role, `${label} · ${activity.phase} ${duration}`);
 }
 
+function formatTtft(ttftMs: number): string {
+	const safe = Math.max(0, Number.isFinite(ttftMs) ? ttftMs : 0);
+	return safe < 1_000 ? `${Math.round(safe)}ms` : `${(safe / 1_000).toFixed(1)}s`;
+}
+
+function responsePerformanceRow(activity: RunActivitySnapshot, palette: AtelierPalette): string {
+	const performance = activity.performance;
+	const ttft = performance && Number.isFinite(performance.ttftMs) ? formatTtft(performance.ttftMs) : "~";
+	const tps =
+		performance?.tokensPerSecond !== undefined && Number.isFinite(performance.tokensPerSecond)
+			? `${performance.estimated ? "~" : ""}${Math.max(0, performance.tokensPerSecond).toFixed(1)}`
+			: "~";
+	return palette.paint("output", `TTFT ${ttft} · TPS ${tps}`);
+}
+
 function activityRows(
 	activity: RunActivitySnapshot,
 	contentWidth: number,
 	palette: AtelierPalette,
 	now: number,
-): ActivityGroups | undefined {
-	const completed = finiteCount(activity.completedCount);
-	const failed = finiteCount(activity.failedCount);
-	const hasActivity =
-		activity.activeTools.length > 0 || activity.recentTools.length > 0 || completed > 0 || failed > 0;
-	if (activity.phase === "idle" && !hasActivity) return undefined;
-
+): ActivityGroups {
 	const activeIds = new Set(activity.activeTools.map((tool) => tool.id));
-	const activeTools = activity.activeTools
+	const active = activity.activeTools
 		.map((tool, index) => ({ index, tool }))
 		.sort((left, right) => left.tool.startedAt - right.tool.startedAt || left.index - right.index)
-		.map(({ tool }) => tool);
+		.map(({ tool }) => ({ id: tool.id, row: toolActivityRow(tool, contentWidth, palette, now) }));
 	const recent = activity.recentTools
 		.filter((tool) => !activeIds.has(tool.id))
 		.slice(0, 3)
 		.map((tool) => ({ id: tool.id, row: toolActivityRow(tool, contentWidth, palette, now) }));
 	const aggregateText = aggregateActivityText(activity);
 	return {
-		core: [
-			runSummaryRow(activity, palette, now),
-			...activeTools.map((tool) => toolActivityRow(tool, contentWidth, palette, now)),
-		],
+		core: [runSummaryRow(activity, palette, now), responsePerformanceRow(activity, palette)],
+		active,
 		recent,
 		aggregate: aggregateText
 			? [palette.paint(activity.failedCount > 0 ? "error" : "ready", aggregateText)]
@@ -596,7 +605,6 @@ function activitySidebarGroups(
 	now: number,
 ): SidebarGroup[] {
 	const groups = activityRows(snapshot.runActivity, contentWidth, palette, now);
-	if (!groups) return [];
 	const recentCount = groups.recent.length;
 	const panelRole: PaletteRole =
 		snapshot.runActivity.phase === "running"
@@ -613,6 +621,14 @@ function activitySidebarGroups(
 			required: true,
 			dropRank: Number.POSITIVE_INFINITY,
 		},
+		...groups.active.map((active, index, rows) => ({
+			name: `activityActive:${active.id}`,
+			panel: "ACTIVITY",
+			panelRole,
+			rows: [active.row],
+			required: false,
+			dropRank: 35 + (rows.length - index) / 100,
+		})),
 		...groups.recent.map((recent, index) => ({
 			name: `activityRecent:${recent.id}`,
 			panel: "ACTIVITY",
@@ -694,8 +710,8 @@ export function renderSidebarLines(
 		},
 		...activitySidebarGroups(snapshot, panelContentWidth, palette, now).map((group) => ({
 			...group,
-			required: false,
-			dropRank: group.name === "activityCore" ? 70 : group.dropRank + 40,
+			required: group.name === "activityCore",
+			dropRank: group.name === "activityCore" ? Number.POSITIVE_INFINITY : group.dropRank + 40,
 		})),
 		{
 			name: "statusDetails",

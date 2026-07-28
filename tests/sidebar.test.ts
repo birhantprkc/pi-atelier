@@ -196,6 +196,11 @@ describe("sidebar snapshot and layout", () => {
 			  "OPENAI-CODEX · MEDIUM · SUBSCRIPTION",
 			  "",
 			  "",
+			  "ACTIVITY",
+			  "Ready",
+			  "TTFT ~ · TPS ~",
+			  "",
+			  "",
 			  "CONTEXT",
 			  "32k / 400k                        8.1%",
 			  "[■·········]",
@@ -215,11 +220,6 @@ describe("sidebar snapshot and layout", () => {
 			  "",
 			  "TOOLS",
 			  "8 / 12 active                        ▸",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
 			  "",
 			  "",
 			  "",
@@ -410,11 +410,101 @@ describe("sidebar snapshot and layout", () => {
 		expect(rows).toContain(expected);
 	});
 
-	it("renders settled activity duration and omits only empty idle activity", () => {
+	it("renders response performance as a compact optional Activity row", () => {
+		const ttftOnly = contentRows(
+			renderSidebarLines(
+				withActivity({
+					phase: "running",
+					turnNumber: 1,
+					startedAt: 1_000,
+					performance: { ttftMs: 820 },
+					activeTools: [],
+					recentTools: [],
+					completedCount: 0,
+					failedCount: 0,
+				}),
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				2_000,
+			),
+		);
+		expect(ttftOnly).toContain("TTFT 820ms · TPS ~");
+
+		const estimated = contentRows(
+			renderSidebarLines(
+				withActivity({
+					phase: "running",
+					startedAt: 1_000,
+					performance: { ttftMs: 820, tokensPerSecond: 42.34, estimated: true },
+					activeTools: [],
+					recentTools: [],
+					completedCount: 0,
+					failedCount: 0,
+				}),
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				2_000,
+			),
+		);
+		expect(estimated).toContain("TTFT 820ms · TPS ~42.3");
+
+		const completed = contentRows(
+			renderSidebarLines(
+				withActivity({
+					phase: "settled",
+					startedAt: 1_000,
+					durationMs: 4_000,
+					performance: { ttftMs: 1_420, tokensPerSecond: 47.34 },
+					activeTools: [],
+					recentTools: [],
+					completedCount: 0,
+					failedCount: 0,
+				}),
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				5_000,
+			),
+		);
+		expect(completed).toContain("TTFT 1.4s · TPS 47.3");
+	});
+
+	it("keeps the run summary and response placeholders when height drops tool activity", () => {
+		const performanceActivity = withActivity({
+			...activeActivity(),
+			performance: { ttftMs: 820, tokensPerSecond: 48 },
+		});
+		const constrainedRows = Array.from({ length: 36 }, (_value, index) => 36 - index)
+			.map((height) =>
+				contentRows(
+					renderSidebarLines(performanceActivity, DEFAULT_CONFIG, theme, 44, height, false, 20_000),
+				),
+			)
+			.find(
+				(rows) =>
+					rows.includes("TTFT 820ms · TPS 48.0") &&
+					rows.some((row) => row.includes("Turn 3")) &&
+					!rows.some((row) => /^read\s+src\/state\.ts/.test(row)),
+			);
+
+		expect(constrainedRows).toBeDefined();
+	});
+
+	it("always renders idle placeholders and preserves settled activity", () => {
 		const idleRows = contentRows(
 			renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
 		);
-		expect(idleRows).not.toContain("ACTIVITY");
+		expect(idleRows).toContain("ACTIVITY");
+		expect(idleRows).toContain("Ready");
+		expect(idleRows).toContain("TTFT ~ · TPS ~");
 
 		const settledRows = contentRows(
 			renderSidebarLines(
@@ -854,7 +944,7 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("suppresses routine healthy extension statuses", () => {
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 28, false));
+		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
 		expect(rows).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▸$/));
 		expect(rows).not.toContain("tests passing");
 		expect(rows).not.toContain("ALERTS");
