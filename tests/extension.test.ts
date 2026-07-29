@@ -963,3 +963,56 @@ describe("extension registration", () => {
 		}
 	});
 });
+describe("tool_result handler for todos", () => {
+	it("collapses old format todos in tool result", () => {
+		const { handlers, ctx, pi } = harness();
+		// Mock sidebar visible
+		const sidebarHandler = handlers.get("sidebar_visible");
+		const toolResultHandler = handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		
+		const event = {
+			toolName: "todo",
+			details: {
+				todos: [
+					{ id: 1, text: "Done task", done: true },
+					{ id: 2, text: "Pending task", done: false },
+				],
+				nextId: 3,
+			},
+		};
+		// Without runtime/sidebar, handler returns undefined early
+		const result = toolResultHandler(event, ctx);
+		expect(result).toBeUndefined();
+	});
+
+	it("collapses new format tasks in tool result", () => {
+		const { handlers, ctx } = harness();
+		const toolResultHandler = handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		
+		const event = {
+			toolName: "todo",
+			details: {
+				tasks: [
+					{ id: 1, subject: "Done", status: "completed" },
+					{ id: 2, subject: "Working", status: "in_progress" },
+					{ id: 3, subject: "Pending", status: "pending" },
+				],
+				nextId: 4,
+			},
+		};
+		const result = toolResultHandler(event, ctx);
+		expect(result).toBeUndefined();
+	});
+
+	it("ignores non-todo tool results", () => {
+		const { handlers, ctx } = harness();
+		const toolResultHandler = handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		
+		const event = { toolName: "read", details: {} };
+		const result = toolResultHandler(event, ctx);
+		expect(result).toBeUndefined();
+	});
+});

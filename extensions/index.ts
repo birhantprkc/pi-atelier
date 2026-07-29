@@ -25,7 +25,7 @@ import {
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
 import { AtelierRuntime } from "../src/state.js";
-import type { FooterState } from "../src/types.js";
+import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -78,6 +78,30 @@ export default function atelierExtension(
 		sidebar?.requestRender();
 	}
 
+
+
+	interface OldTodoDetails { todos: TodoItem[]; nextId: number; }
+	interface NewTaskDetails { tasks: RpivTask[]; nextId: number; }
+
+	function normalizeTodo(item: TodoItem | RpivTask): NormalizedTodo {
+		if ('done' in item) {
+			return { id: item.id, text: item.text, status: item.done ? 'completed' : 'pending' };
+		}
+		return { id: item.id, text: item.subject, status: item.status as 'pending' | 'in_progress' | 'completed' };
+	}
+
+	function reconstructTodos(ctx: ExtensionContext): NormalizedTodo[] {
+		let allItems: (TodoItem | RpivTask)[] = [];
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "message") continue;
+			const msg = entry.message;
+			if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
+			const details = msg.details as OldTodoDetails | NewTaskDetails | undefined;
+			if (details && 'todos' in details) allItems = details.todos;
+			if (details && 'tasks' in details) allItems = details.tasks;
+		}
+		return allItems.map(normalizeTodo);
+	}
 	function getSidebarSnapshot(
 		ctx: ExtensionContext,
 		targetRuntime: AtelierRuntime,
@@ -97,6 +121,7 @@ export default function atelierExtension(
 			activeToolNames: activeTools,
 			extensionStatuses,
 			...(targetRunActivity ? { runActivity: targetRunActivity.getSnapshot() } : {}),
+			todos: reconstructTodos(ctx),
 		});
 	}
 
@@ -543,6 +568,24 @@ export default function atelierExtension(
 		if (!current?.runActivity) return;
 		current.runActivity.finishTool(event);
 		current.runtime?.scheduleWorkspacePulseRefresh();
+	});
+	// Collapse todo tool output when sidebar shows todos
+	pi.on("tool_result", (event, ctx) => {
+		if (event.toolName !== "todo") return;
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime) return;
+		if (!current.runtime.getConfig().showSidebarTodos) return;
+		if (!sidebar?.isVisible()) return;
+
+		const details = event.details as OldTodoDetails | NewTaskDetails | undefined;
+		let todoList: NormalizedTodo[] = [];
+		if (details && 'todos' in details) todoList = details.todos.map(normalizeTodo);
+		if (details && 'tasks' in details) todoList = details.tasks.map(normalizeTodo);
+		const done = todoList.filter((t) => t.status === 'completed').length;
+		sidebar?.requestRender();
+		return {
+			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
+		};
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);

@@ -1586,5 +1586,77 @@ describe("sidebar component and overlay", () => {
 		expect(onError).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringContaining("TUI") }),
 		);
+});
+});
+
+describe("todos panel", () => {
+	it("omits todos panel when list is empty", () => {
+		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
+		expect(rows).not.toContain("TODOS");
+	});
+
+	it("renders todos with all 3 status states", () => {
+		const snapWithTodos = buildSidebarSnapshot({
+			state,
+			cwd: "/Users/example/projects/pi-atelier",
+			sessionName: "Sidebar implementation",
+			sessionFile: "/tmp/session.jsonl",
+			branchEntryCount: 38,
+			activeToolCount: 8,
+			availableToolCount: 12,
+			skillsCount: 0,
+			extensionStatuses: ["tests passing"],
+			runActivity: EMPTY_RUN_ACTIVITY,
+			todos: [
+				{ id: 1, text: "Review diff", status: "completed" },
+				{ id: 2, text: "Write tests", status: "in_progress" },
+				{ id: 3, text: "Commit changes", status: "pending" },
+			],
+		});
+		const rows = contentRows(renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false));
+		expect(rows).toContain("TODOS");
+		expect(rows).toContain("1/3");
+		expect(rows).toContain("✓ #1 Review diff");
+		expect(rows).toContain("◐ #2 Write tests");
+		expect(rows).toContain("○ #3 Commit changes");
+	});
+
+	it("hides todos panel when config disables showSidebarTodos", () => {
+		const snapWithTodos = buildSidebarSnapshot({
+			state,
+			cwd: "/Users/example/projects/pi-atelier",
+			sessionName: "Sidebar implementation",
+			sessionFile: "/tmp/session.jsonl",
+			branchEntryCount: 38,
+			activeToolCount: 8,
+			availableToolCount: 12,
+			skillsCount: 0,
+			extensionStatuses: ["tests passing"],
+			runActivity: EMPTY_RUN_ACTIVITY,
+			todos: [{ id: 1, text: "Task", status: "pending" }],
+		});
+		const config = { ...DEFAULT_CONFIG, showSidebarTodos: false };
+		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
+		expect(rows).not.toContain("TODOS");
+	});
+
+	it("sanitizes ansi codes in todo text", () => {
+		const snapWithTodos = buildSidebarSnapshot({
+			state,
+			cwd: "/Users/example/projects/pi-atelier",
+			sessionName: "Sidebar implementation",
+			sessionFile: "/tmp/session.jsonl",
+			branchEntryCount: 38,
+			activeToolCount: 8,
+			availableToolCount: 12,
+			skillsCount: 0,
+			extensionStatuses: ["tests passing"],
+			runActivity: EMPTY_RUN_ACTIVITY,
+			todos: [{ id: 1, text: "Task\u001b[31mred", status: "pending" }],
+		});
+		const lines = renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false);
+		expect(lines.join("")).not.toContain("[31m");
+		const rows = contentRows(lines);
+		expect(rows).toContain("○ #1 Taskred");
 	});
 });
