@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-07-29
 
 - Add Workspace Pulse to summarize whole-worktree tracked changes, text additions/removals, count-only untracked files, binary files, changed submodules, and conflicts.
 - Keep inspecting, clean, non-repository, unavailable, and stale workspace states explicit while preserving the footer's compact dirty marker.
