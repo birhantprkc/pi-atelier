@@ -12,7 +12,8 @@ import {
 	type ToolActivity,
 } from "./run-activity.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
-import type { AtelierConfig, AtelierState } from "./types.js";
+import type { AtelierConfig, AtelierState, WorkspacePulseState } from "./types.js";
+import type { WorkspacePulseData } from "./workspace-pulse.js";
 
 export interface SidebarSnapshotInput {
 	state: AtelierState;
@@ -40,8 +41,13 @@ export interface SidebarSnapshot extends AtelierState {
 	runActivity: RunActivitySnapshot;
 }
 
+function workspacePulseData(pulse: WorkspacePulseState): WorkspacePulseData | undefined {
+	return "data" in pulse ? pulse.data : undefined;
+}
+
 export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapshot {
-	const projectName = basename(input.cwd) || input.cwd;
+	const pulseData = workspacePulseData(input.state.workspacePulse);
+	const projectName = basename(pulseData?.root ?? input.cwd) || pulseData?.root || input.cwd;
 	return {
 		...input.state,
 		projectName,
@@ -215,30 +221,110 @@ function agentRows(
 	];
 }
 
-function workspaceRows(snapshot: SidebarSnapshot, layout: SidebarLayout, palette: AtelierPalette): string[] {
+function pulseIndicator(pulse: WorkspacePulseState): { symbol: string; role: PaletteRole } {
+	if (pulse.status === "conflict") return { symbol: "✕", role: "error" };
+	if (pulse.status === "changed") return { symbol: "▲", role: "warning" };
+	if (pulse.status === "stale") return { symbol: "~", role: "warning" };
+	if (pulse.status === "clean") return { symbol: "", role: "ready" };
+	return { symbol: "", role: "dim" };
+}
+
+function formatPulseCount(value: number): string {
+	const count = finiteCount(value);
+	if (count < 1_000) return count.toString();
+	if (count < 1_000_000) return `${(count / 1_000).toFixed(count < 10_000 ? 1 : 0)}k`;
+	return `${(count / 1_000_000).toFixed(count < 10_000_000 ? 1 : 0)}M`;
+}
+
+interface WorkspacePulseRows {
+	core: string[];
+	details: string[];
+}
+
+function workspacePulseRows(
+	pulse: WorkspacePulseState,
+	layout: SidebarLayout,
+	palette: AtelierPalette,
+): WorkspacePulseRows {
+	if (pulse.status === "inspecting") return { core: [palette.paint("muted", "inspecting…")], details: [] };
+	if (pulse.status === "not-repo")
+		return { core: [palette.paint("dim", "not a Git repository")], details: [] };
+	if (pulse.status === "unavailable")
+		return { core: [palette.paint("warning", "Git unavailable")], details: [] };
+	if (!("data" in pulse)) return { core: [], details: [] };
+
+	const { snapshot } = pulse.data;
+	if (pulse.status === "clean") return { core: [palette.paint("ready", "✓ clean")], details: [] };
+	const tracked = `${formatPulseCount(snapshot.trackedFiles)} tracked`;
+	const lines = `+${formatPulseCount(snapshot.linesAdded)}  −${formatPulseCount(snapshot.linesRemoved)}`;
+	const role = pulse.status === "stale" ? "warning" : "primary";
+	const prefix = pulse.status === "stale" ? "~ stale · " : "";
+	const core = layout.compact
+		? [palette.paint(role, `${prefix}${tracked}`), palette.paint(role, lines)]
+		: [palette.paint(role, `${prefix}${tracked}  ${lines}`)];
+	if (snapshot.conflicts > 0)
+		core.push(palette.paint("error", `${finiteCount(snapshot.conflicts)} conflicts`));
+	const details = [
+		snapshot.untrackedFiles > 0
+			? layout.compact
+				? `?${formatPulseCount(snapshot.untrackedFiles)}`
+				: `${formatPulseCount(snapshot.untrackedFiles)} untracked`
+			: "",
+		snapshot.binaryFiles > 0
+			? layout.compact
+				? `bin${formatPulseCount(snapshot.binaryFiles)}`
+				: `${formatPulseCount(snapshot.binaryFiles)} binary`
+			: "",
+		snapshot.submodules > 0
+			? layout.compact
+				? `sub${formatPulseCount(snapshot.submodules)}`
+				: `${formatPulseCount(snapshot.submodules)} submodule`
+			: "",
+	].filter(Boolean);
+	return { core, details: details.length > 0 ? [palette.paint("muted", details.join(" · "))] : [] };
+}
+
+interface WorkspaceRows {
+	identity: string[];
+	location: string[];
+	pulseCore: string[];
+	pulseDetails: string[];
+	session: string[];
+}
+
+function workspaceRows(
+	snapshot: SidebarSnapshot,
+	layout: SidebarLayout,
+	palette: AtelierPalette,
+): WorkspaceRows {
 	const project = valueRow(snapshot.projectName, palette, "primary");
 	const branch = snapshot.branch ? palette.paint("accent", display(snapshot.branch)) : "";
-	const gitState = snapshot.branch
-		? palette.paint(snapshot.dirty ? "warning" : "ready", snapshot.dirty ? "▲" : "✓")
-		: "";
+	const indicator = pulseIndicator(snapshot.workspacePulse);
+	const gitState = branch && indicator.symbol ? palette.paint(indicator.role, indicator.symbol) : "";
 	const identity = branch ? `${project} ${palette.paint("dim", "·")} ${branch} ${gitState}` : project;
-	const rows: string[] = [];
-	if (layout.compact) {
-		rows.push(project);
-		if (branch) rows.push(`${branch} ${gitState}`);
-	} else {
-		rows.push(identity);
-	}
-	rows.push(palette.paint("muted", shortPath(snapshot.cwd)));
+	const identityRows = layout.compact ? [project, ...(branch ? [`${branch} ${gitState}`] : [])] : [identity];
+	const pulseData = workspacePulseData(snapshot.workspacePulse);
+	const location = pulseData?.relativeCwd
+		? [palette.paint("muted", `./${sanitize(pulseData.relativeCwd)}`)]
+		: pulseData
+			? []
+			: [palette.paint("muted", shortPath(snapshot.cwd))];
+	const pulse = workspacePulseRows(snapshot.workspacePulse, layout, palette);
 	const sessionName = snapshot.sessionName ? sanitize(snapshot.sessionName) : "";
-	if (sessionName) rows.push(palette.paint("primary", sessionName));
-	rows.push(
+	const session = [
+		...(sessionName ? [palette.paint("primary", sessionName)] : []),
 		`${palette.paint("primary", `${finiteCount(snapshot.branchEntryCount)} entries`)} ${palette.paint(
 			"dim",
 			"·",
 		)} ${palette.paint(snapshot.persisted ? "ready" : "muted", snapshot.persisted ? "persisted" : "ephemeral")}`,
-	);
-	return rows;
+	];
+	return {
+		identity: identityRows,
+		location,
+		pulseCore: pulse.core,
+		pulseDetails: pulse.details,
+		session,
+	};
 }
 
 function contextRole(snapshot: SidebarSnapshot, config: AtelierConfig): PaletteRole {
@@ -665,7 +751,10 @@ function composeGroups(
 			dropIndex = index;
 		}
 		if (dropIndex === -1) return candidate;
-		candidate = candidate.filter((_group, index) => index !== dropIndex);
+		const dropName = candidate[dropIndex]?.name;
+		candidate = candidate.filter((group, index) =>
+			dropName ? group.name !== dropName : index !== dropIndex,
+		);
 	}
 	return candidate;
 }
@@ -688,6 +777,7 @@ export function renderSidebarLines(
 	const panelContentWidth = Math.max(0, contentWidth - 4);
 	const layout = sidebarLayout(safeWidth, config);
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
+	const workspace = workspaceRows(snapshot, layout, palette);
 	const groups: SidebarGroup[] = [
 		...(resizing
 			? [
@@ -730,12 +820,44 @@ export function renderSidebarLines(
 			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
-			name: "workspace",
+			name: "workspaceCore",
 			panel: "WORKSPACE",
 			panelRole: "accent",
-			rows: workspaceRows(snapshot, layout, palette),
+			rows: workspace.identity,
 			required: false,
 			dropRank: 30,
+		},
+		{
+			name: "workspaceLocation",
+			panel: "WORKSPACE",
+			panelRole: "accent",
+			rows: workspace.location,
+			required: false,
+			dropRank: 5,
+		},
+		{
+			name: "workspaceCore",
+			panel: "WORKSPACE",
+			panelRole: "accent",
+			rows: workspace.pulseCore,
+			required: false,
+			dropRank: 30,
+		},
+		{
+			name: "workspaceDetails",
+			panel: "WORKSPACE",
+			panelRole: "accent",
+			rows: workspace.pulseDetails,
+			required: false,
+			dropRank: 6,
+		},
+		{
+			name: "workspaceSession",
+			panel: "WORKSPACE",
+			panelRole: "accent",
+			rows: workspace.session,
+			required: false,
+			dropRank: 4,
 		},
 		{
 			name: "usage",

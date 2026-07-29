@@ -37,7 +37,7 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Searchable tool controls
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
-- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, and response-performance activity
+- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, and Workspace Pulse activity
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
 - User and trusted-project configuration
@@ -125,7 +125,9 @@ The sidebar starts shown whenever the extension initializes. An explicit `off` a
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
 
-The scan-first hierarchy leads with agent state and model, followed by a compact segmented context meter and a merged workspace summary. Below 40 sidebar columns, a unified compact mode stacks Agent and Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
+The scan-first hierarchy leads with agent state and model, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
+
+Below 40 sidebar columns, a unified compact mode stacks Agent and Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
 
 ## Completion notifications
 
@@ -209,7 +211,7 @@ Pi Atelier:
 - Does not store prompts, responses, credentials, or session content
 - Never includes prompt or assistant-response content in completion notifications
 - Reads structured usage metadata already available inside Pi
-- Executes local `git status --short --branch --untracked-files=no` after relevant events to show tracked dirty state
+- Executes read-only local Git worktree inspection after relevant Pi events to show branch and Workspace Pulse counts; untracked file contents are never read
 - Invokes `osascript` on macOS or PowerShell on Windows for enabled best-effort system notifications
 - Reads project configuration only when Pi reports the project as trusted
 

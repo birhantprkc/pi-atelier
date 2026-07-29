@@ -1,6 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
-import { AtelierRuntime, parseGitStatus } from "../src/state.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { AtelierRuntime } from "../src/state.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+
+afterEach(() => {
+	vi.useRealTimers();
+});
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
 
 const assistant = {
 	type: "message",
@@ -10,9 +22,26 @@ const assistant = {
 	},
 };
 
+const cleanInspection = {
+	kind: "available" as const,
+	root: "/repo",
+	relativeCwd: "",
+	branch: "main",
+	snapshot: {
+		trackedFiles: 0,
+		untrackedFiles: 0,
+		linesAdded: 0,
+		linesRemoved: 0,
+		binaryFiles: 0,
+		submodules: 0,
+		conflicts: 0,
+	},
+};
+
 function createRuntime(
 	execResult = { stdout: "", stderr: "", code: 0, killed: false },
 	random: () => number = Math.random,
+	inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection),
 ) {
 	const requestRender = vi.fn();
 	const exec = vi.fn().mockResolvedValue(execResult);
@@ -29,15 +58,10 @@ function createRuntime(
 		autoCompact: true,
 		random,
 		requestRender,
+		inspectWorkspace,
 	});
-	return { runtime, exec, requestRender };
+	return { runtime, exec, requestRender, inspectWorkspace };
 }
-
-describe("parseGitStatus", () => {
-	it("normalizes an unborn branch header", () => {
-		expect(parseGitStatus("## No commits yet on main\n")).toEqual({ branch: "main", dirty: false });
-	});
-});
 
 describe("AtelierRuntime", () => {
 	it("derives metrics without retaining message content", () => {
@@ -51,43 +75,115 @@ describe("AtelierRuntime", () => {
 		expect(JSON.stringify(runtime.getState())).not.toContain("content");
 	});
 
-	it("derives branch and dirty state from one porcelain query", async () => {
-		const { runtime, exec } = createRuntime({
-			stdout: "## feature/sidebar\n M src/a.ts\n",
-			stderr: "",
-			code: 0,
-			killed: false,
-		});
+	it("starts inspecting and derives clean or changed Pulse states from successful inspection", async () => {
+		const changed = {
+			...cleanInspection,
+			branch: "feature/pulse",
+			snapshot: { ...cleanInspection.snapshot, trackedFiles: 2, linesAdded: 12, linesRemoved: 3 },
+		};
+		const inspectWorkspace = vi.fn().mockResolvedValue(changed);
+		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
 
-		await runtime.refreshGitState();
+		expect(runtime.getState()).toMatchObject({ workspacePulse: { status: "inspecting" } });
+		await runtime.refreshWorkspacePulse();
 
-		expect(exec).toHaveBeenCalledWith("git", ["status", "--short", "--branch", "--untracked-files=no"], {
-			timeout: 2_000,
+		expect(runtime.getState()).toMatchObject({
+			branch: "feature/pulse",
+			dirty: true,
+			workspacePulse: {
+				status: "changed",
+				data: { branch: "feature/pulse", root: "/repo", snapshot: changed.snapshot },
+			},
 		});
-		expect(runtime.getState()).toMatchObject({ branch: "feature/sidebar", dirty: true });
 	});
 
-	it("handles detached HEAD and a clean tree", async () => {
-		const { runtime } = createRuntime({
-			stdout: "## HEAD (no branch)\n",
-			stderr: "",
-			code: 0,
-			killed: false,
+	it("keeps the Footer dirty marker tracked-only for an untracked-only Pulse", async () => {
+		const untrackedOnly = {
+			...cleanInspection,
+			snapshot: { ...cleanInspection.snapshot, untrackedFiles: 2 },
+		};
+		const { runtime } = createRuntime(undefined, Math.random, vi.fn().mockResolvedValue(untrackedOnly));
+
+		await runtime.refreshWorkspacePulse();
+
+		expect(runtime.getState()).toMatchObject({
+			dirty: false,
+			workspacePulse: { status: "changed", data: { snapshot: { untrackedFiles: 2 } } },
 		});
-
-		await runtime.refreshGitState();
-
-		expect(runtime.getState()).toMatchObject({ branch: "detached", dirty: false });
 	});
 
-	it("clears Git metadata when the directory is not a repository", async () => {
-		const { runtime, exec } = createRuntime();
-		exec.mockRejectedValue(new Error("not a repository"));
+	it("preserves the last successful Pulse as stale when a later inspection fails", async () => {
+		const inspectWorkspace = vi
+			.fn()
+			.mockResolvedValueOnce(cleanInspection)
+			.mockResolvedValueOnce({ kind: "unavailable" });
+		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
 
-		await expect(runtime.refreshGitState()).resolves.toBeUndefined();
+		await runtime.refreshWorkspacePulse();
+		await runtime.refreshWorkspacePulse();
 
-		expect(runtime.getState().branch).toBeUndefined();
-		expect(runtime.getState().dirty).toBe(false);
+		expect(runtime.getState()).toMatchObject({
+			branch: "main",
+			dirty: false,
+			workspacePulse: {
+				status: "stale",
+				data: { branch: "main", root: "/repo", snapshot: cleanInspection.snapshot },
+			},
+		});
+	});
+
+	it("ignores an older inspection that finishes after a newer refresh", async () => {
+		const older = deferred<typeof cleanInspection>();
+		const newer = deferred<typeof cleanInspection>();
+		const inspectWorkspace = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
+		const firstRefresh = runtime.refreshWorkspacePulse();
+		const secondRefresh = runtime.refreshWorkspacePulse();
+		const changed = {
+			...cleanInspection,
+			branch: "newer",
+			snapshot: { ...cleanInspection.snapshot, trackedFiles: 1 },
+		};
+
+		newer.resolve(changed);
+		await secondRefresh;
+		older.resolve(cleanInspection);
+		await firstRefresh;
+
+		expect(runtime.getState()).toMatchObject({
+			branch: "newer",
+			workspacePulse: { status: "changed" },
+		});
+	});
+
+	it("does not invalidate rendering when a refresh confirms the same Pulse", async () => {
+		const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);
+		const { runtime, requestRender } = createRuntime(undefined, Math.random, inspectWorkspace);
+		await runtime.refreshWorkspacePulse();
+		requestRender.mockClear();
+
+		await runtime.refreshWorkspacePulse();
+
+		expect(requestRender).not.toHaveBeenCalled();
+	});
+
+	it("coalesces tool-driven refresh requests and cancels them on disposal", async () => {
+		vi.useFakeTimers();
+		const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);
+		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
+
+		runtime.scheduleWorkspacePulseRefresh();
+		runtime.scheduleWorkspacePulseRefresh();
+		runtime.scheduleWorkspacePulseRefresh();
+		await vi.advanceTimersByTimeAsync(249);
+		expect(inspectWorkspace).not.toHaveBeenCalled();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(inspectWorkspace).toHaveBeenCalledOnce();
+
+		runtime.scheduleWorkspacePulseRefresh();
+		runtime.dispose();
+		await vi.runAllTimersAsync();
+		expect(inspectWorkspace).toHaveBeenCalledOnce();
 	});
 
 	it("selects one stable label when a work cycle starts", () => {

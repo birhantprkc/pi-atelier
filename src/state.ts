@@ -1,19 +1,15 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { selectWorkingPhrase } from "./activity.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
 import type { ActivityState, AtelierConfig, AtelierState } from "./types.js";
+import {
+	inspectWorkspacePulse,
+	type WorkspacePulseData,
+	type WorkspacePulseInspection,
+} from "./workspace-pulse.js";
 
-export function parseGitStatus(output: string): { branch?: string; dirty: boolean } {
-	const lines = output.split(/\r?\n/).filter(Boolean);
-	const header = lines[0]?.startsWith("## ") ? lines[0].slice(3).trim() : "";
-	const rawBranch = header.split("...")[0]?.trim() ?? "";
-	const unbornBranch = rawBranch.match(/^No commits yet on (.+)$/)?.[1]?.trim();
-	const branch = rawBranch === "HEAD (no branch)" ? "detached" : (unbornBranch ?? rawBranch);
-	return {
-		...(branch ? { branch } : {}),
-		dirty: lines.some((line) => !line.startsWith("## ")),
-	};
-}
+const WORKSPACE_REFRESH_DEBOUNCE_MS = 250;
 
 export interface RuntimeDependencies {
 	pi: ExtensionAPI;
@@ -22,6 +18,7 @@ export interface RuntimeDependencies {
 	autoCompact: boolean | null;
 	random?: () => number;
 	requestRender(): void;
+	inspectWorkspace?(): Promise<WorkspacePulseInspection>;
 }
 
 export class AtelierRuntime {
@@ -30,8 +27,12 @@ export class AtelierRuntime {
 	readonly #autoCompact: boolean | null;
 	readonly #random: () => number;
 	readonly #requestRender: () => void;
+	readonly #inspectWorkspace: () => Promise<WorkspacePulseInspection>;
 	#config: AtelierConfig;
 	#disposed = false;
+	#workspaceRefreshGeneration = 0;
+	#workspaceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	#lastWorkspaceData: WorkspacePulseData | undefined;
 	#state: AtelierState;
 
 	constructor(dependencies: RuntimeDependencies) {
@@ -41,10 +42,14 @@ export class AtelierRuntime {
 		this.#autoCompact = dependencies.autoCompact;
 		this.#random = dependencies.random ?? Math.random;
 		this.#requestRender = dependencies.requestRender;
+		this.#inspectWorkspace =
+			dependencies.inspectWorkspace ??
+			(() => inspectWorkspacePulse({ exec: this.#pi.exec.bind(this.#pi), cwd: this.#ctx.cwd }));
 		const context = this.#ctx.getContextUsage();
 		this.#state = {
 			activity: "ready",
 			dirty: false,
+			workspacePulse: { status: "inspecting" },
 			metrics: aggregateMetrics([], {
 				subscription: false,
 				autoCompact: this.#autoCompact,
@@ -102,30 +107,84 @@ export class AtelierRuntime {
 		this.#invalidate();
 	}
 
-	async refreshGitState(): Promise<void> {
+	scheduleWorkspacePulseRefresh(delayMs = WORKSPACE_REFRESH_DEBOUNCE_MS): void {
 		if (this.#disposed) return;
-		let next: { branch?: string; dirty: boolean } = { dirty: false };
-		try {
-			const result = await this.#pi.exec("git", ["status", "--short", "--branch", "--untracked-files=no"], {
-				timeout: 2_000,
-			});
-			if (result.code === 0) next = parseGitStatus(result.stdout);
-		} catch {
-			next = { dirty: false };
+		if (this.#workspaceRefreshTimer) clearTimeout(this.#workspaceRefreshTimer);
+		this.#workspaceRefreshTimer = setTimeout(
+			() => {
+				this.#workspaceRefreshTimer = undefined;
+				void this.refreshWorkspacePulse();
+			},
+			Math.max(0, Math.trunc(delayMs)),
+		);
+		this.#workspaceRefreshTimer.unref?.();
+	}
+
+	async refreshWorkspacePulse(): Promise<void> {
+		if (this.#disposed) return;
+		if (this.#workspaceRefreshTimer) {
+			clearTimeout(this.#workspaceRefreshTimer);
+			this.#workspaceRefreshTimer = undefined;
 		}
-		const sameBranch = this.#state.branch === next.branch;
-		if (sameBranch && this.#state.dirty === next.dirty) return;
-		const { branch: _branch, ...withoutBranch } = this.#state;
-		this.#state = { ...withoutBranch, ...next };
-		this.#invalidate();
+		const generation = ++this.#workspaceRefreshGeneration;
+		const inspection = await this.#inspectWorkspace();
+		if (this.#disposed || generation !== this.#workspaceRefreshGeneration) return;
+
+		if (inspection.kind === "available") {
+			const { kind: _kind, ...data } = inspection;
+			this.#lastWorkspaceData = data;
+			const { snapshot } = data;
+			const dirty = snapshot.trackedFiles > 0;
+			const pulseChanged = dirty || snapshot.untrackedFiles > 0;
+			const status = snapshot.conflicts > 0 ? "conflict" : pulseChanged ? "changed" : "clean";
+			const { branch: _branch, ...withoutBranch } = this.#state;
+			this.#replaceState({
+				...withoutBranch,
+				...(data.branch ? { branch: data.branch } : {}),
+				dirty,
+				workspacePulse: { status, data },
+			});
+			return;
+		}
+
+		if (inspection.kind === "not-repo") {
+			this.#lastWorkspaceData = undefined;
+			const { branch: _branch, ...withoutBranch } = this.#state;
+			this.#replaceState({
+				...withoutBranch,
+				dirty: false,
+				workspacePulse: { status: "not-repo" },
+			});
+			return;
+		}
+
+		this.#replaceState({
+			...this.#state,
+			workspacePulse: this.#lastWorkspaceData
+				? { status: "stale", data: this.#lastWorkspaceData }
+				: { status: "unavailable" },
+		});
+	}
+
+	async refreshGitState(): Promise<void> {
+		await this.refreshWorkspacePulse();
 	}
 
 	async refreshGitDirty(): Promise<void> {
-		await this.refreshGitState();
+		await this.refreshWorkspacePulse();
 	}
 
 	dispose(): void {
 		this.#disposed = true;
+		this.#workspaceRefreshGeneration += 1;
+		if (this.#workspaceRefreshTimer) clearTimeout(this.#workspaceRefreshTimer);
+		this.#workspaceRefreshTimer = undefined;
+	}
+
+	#replaceState(next: AtelierState): void {
+		if (isDeepStrictEqual(this.#state, next)) return;
+		this.#state = next;
+		this.#invalidate();
 	}
 
 	#invalidate(): void {

@@ -31,6 +31,23 @@ const state: AtelierState = {
 	thinkingLevel: "medium",
 	branch: "feature/sidebar",
 	dirty: true,
+	workspacePulse: {
+		status: "changed",
+		data: {
+			root: "/Users/example/projects/pi-atelier",
+			relativeCwd: "",
+			branch: "feature/sidebar",
+			snapshot: {
+				trackedFiles: 5,
+				untrackedFiles: 2,
+				linesAdded: 182,
+				linesRemoved: 47,
+				binaryFiles: 0,
+				submodules: 0,
+				conflicts: 0,
+			},
+		},
+	},
 	metrics: {
 		usageAvailable: true,
 		costAvailable: true,
@@ -152,6 +169,103 @@ describe("sidebar snapshot and layout", () => {
 		);
 	});
 
+	it("renders a scan-first Workspace Pulse without repeating the repository root path", () => {
+		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 0));
+
+		expect(rows).toContain("5 tracked  +182  −47");
+		expect(rows).toContain("2 untracked");
+		expect(rows).not.toContain("/Users/example/projects/pi-atelier");
+		expect(rows).toContain("Sidebar implementation");
+		expect(rows).toContain("38 entries · persisted");
+	});
+
+	it.each([
+		[{ status: "inspecting" as const }, "inspecting…"],
+		[{ status: "not-repo" as const }, "not a Git repository"],
+		[{ status: "unavailable" as const }, "Git unavailable"],
+	])("renders the %s Pulse state explicitly", (workspacePulse, expected) => {
+		const { branch: _branch, ...withoutBranch } = snapshot();
+		const rows = contentRows(
+			renderSidebarLines(
+				{ ...withoutBranch, workspacePulse, dirty: false },
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				0,
+			),
+		);
+		expect(rows).toContain(expected);
+	});
+
+	it("keeps conflict and stale signals visible without expanding every Git category", () => {
+		if (!("data" in state.workspacePulse)) throw new Error("expected fixture Pulse data");
+		const data = {
+			...state.workspacePulse.data,
+			relativeCwd: "packages/api",
+			snapshot: {
+				...state.workspacePulse.data.snapshot,
+				binaryFiles: 1,
+				submodules: 1,
+				conflicts: 2,
+			},
+		};
+		const conflictRows = contentRows(
+			renderSidebarLines(
+				{ ...snapshot(), workspacePulse: { status: "conflict", data } },
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				0,
+			),
+		);
+		expect(conflictRows).toContain("./packages/api");
+		expect(conflictRows).toContain("2 conflicts");
+		expect(conflictRows).toContain("2 untracked · 1 binary · 1 submodule");
+
+		const staleRows = contentRows(
+			renderSidebarLines(
+				{ ...snapshot(), workspacePulse: { status: "stale", data } },
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				36,
+				false,
+				0,
+			),
+		);
+		expect(staleRows).toContain("~ stale · 5 tracked  +182  −47");
+
+		const compactRows = contentRows(
+			renderSidebarLines(
+				{ ...snapshot(), workspacePulse: { status: "stale", data } },
+				DEFAULT_CONFIG,
+				theme,
+				28,
+				36,
+				false,
+				0,
+			),
+		);
+		expect(compactRows).toContain("~ stale · 5 tracked");
+		expect(compactRows).toContain("+182  −47");
+		expect(compactRows).toContain("?2 · bin1 · sub1");
+	});
+
+	it("drops Session and optional Pulse detail before the Workspace identity and core summary", () => {
+		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 20, false, 0));
+
+		expect(rows).toContain("WORKSPACE");
+		expect(rows).toContain("pi-atelier · feature/sidebar ▲");
+		expect(rows).toContain("5 tracked  +182  −47");
+		expect(rows).not.toContain("2 untracked");
+		expect(rows).not.toContain("Sidebar implementation");
+		expect(rows).not.toContain("38 entries · persisted");
+	});
+
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
 		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 0).join("\n");
 		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 400).join("\n");
@@ -208,7 +322,8 @@ describe("sidebar snapshot and layout", () => {
 			  "",
 			  "WORKSPACE",
 			  "pi-atelier · feature/sidebar ▲",
-			  "/Users/example/projects/pi-atelier",
+			  "5 tracked  +182  −47",
+			  "2 untracked",
 			  "6 entries · ephemeral",
 			  "",
 			  "",
@@ -220,7 +335,6 @@ describe("sidebar snapshot and layout", () => {
 			  "",
 			  "TOOLS",
 			  "8 / 12 active                        ▸",
-			  "",
 			  "",
 			  "",
 			  "",
@@ -760,7 +874,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(fg).toHaveBeenCalledWith("error", "failed 1s");
 	});
 
-	it("drops tools, then usage, then workspace as height contracts", () => {
+	it("drops workspace details, tools, then usage as height contracts", () => {
 		const ranked = withActivity({
 			phase: "running",
 			turnNumber: 2,
@@ -807,24 +921,29 @@ describe("sidebar snapshot and layout", () => {
 			fullRows.indexOf("CONTEXT"),
 		);
 
-		const withoutTools = contentRows(
+		const withoutSession = contentRows(
 			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
+		);
+		expect(withoutSession).toContain("TOOLS");
+		expect(withoutSession).toContain("USAGE");
+		expect(withoutSession).toContain("WORKSPACE");
+		expect(withoutSession).not.toContain("Sidebar implementation");
+		expect(withoutSession).not.toContain("38 entries · persisted");
+
+		const withoutTools = contentRows(
+			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 32, false, 20_000),
 		);
 		expect(withoutTools).not.toContain("TOOLS");
 		expect(withoutTools).toContain("USAGE");
 		expect(withoutTools).toContain("WORKSPACE");
 
-		const withoutUsage = contentRows(
-			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 32, false, 20_000),
-		);
-		expect(withoutUsage).not.toContain("TOOLS");
-		expect(withoutUsage).not.toContain("USAGE");
-		expect(withoutUsage).toContain("WORKSPACE");
-
 		const coreOnly = contentRows(renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 26, false, 20_000));
 		expect(coreOnly).not.toContain("TOOLS");
 		expect(coreOnly).not.toContain("USAGE");
-		expect(coreOnly).not.toContain("WORKSPACE");
+		expect(coreOnly).toContain("WORKSPACE");
+		expect(coreOnly).toContain("5 tracked  +182  −47");
+		expect(coreOnly).not.toContain("Sidebar implementation");
+		expect(coreOnly).not.toContain("38 entries · persisted");
 		expect(coreOnly).toContain("AGENT");
 		expect(coreOnly).toContain("CONTEXT");
 	});

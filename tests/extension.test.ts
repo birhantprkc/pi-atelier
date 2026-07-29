@@ -332,9 +332,11 @@ describe("extension registration", () => {
 		git.resolve(gitResult("stale"));
 		await starting;
 
-		expect(h.setFooter).not.toHaveBeenCalled();
+		expect(h.setFooter.mock.calls).toEqual([[expect.any(Function)], [undefined]]);
+		expect(h.custom).toHaveBeenCalledOnce();
+		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		await command(h, "sidebar on");
-		expect(h.custom).not.toHaveBeenCalled();
+		expect(h.custom).toHaveBeenCalledOnce();
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Pi Atelier is not active in this session", "warning");
 	});
 
@@ -346,20 +348,21 @@ describe("extension registration", () => {
 
 		const firstStart = start(h);
 		await vi.waitFor(() => expect(h.pi.exec).toHaveBeenCalledTimes(1));
-		const secondStart = start(h);
+		const newerContext = replacementContext(h.ctx, "Newer");
+		const secondStart = start(h, newerContext);
 		await vi.waitFor(() => expect(h.pi.exec).toHaveBeenCalledTimes(2));
 		secondGit.resolve(gitResult("newer"));
 		await secondStart;
-		await command(h, "sidebar on");
-		expect(h.overlays[0]?.component.render(44).join("\n")).toContain("newer");
+		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
+		expect(h.overlays[1]?.component.render(44).join("\n")).toContain("Newer");
 
 		firstGit.resolve(gitResult("stale"));
 		await firstStart;
 
-		expect(h.overlays[0]?.done).not.toHaveBeenCalled();
-		expect(h.overlays[0]?.component.render(44).join("\n")).toContain("newer");
-		expect(h.overlays[0]?.component.render(44).join("\n")).not.toContain("stale");
-		expect(h.setFooter).toHaveBeenCalledOnce();
+		expect(h.overlays[1]?.done).not.toHaveBeenCalled();
+		expect(h.overlays[1]?.component.render(44).join("\n")).toContain("Newer");
+		expect(h.overlays[1]?.component.render(44).join("\n")).not.toContain("stale");
+		expect(h.setFooter).toHaveBeenCalledTimes(2);
 	});
 
 	it("closes the old sidebar and starts the replacement visible on session reload", async () => {
@@ -417,6 +420,7 @@ describe("extension registration", () => {
 		const h = harness();
 		await start(h);
 		await command(h, "sidebar on");
+		h.overlays[0]?.requestRender.mockClear();
 		let statuses = new Map([["one", "extension one"]]);
 		const footer = h.setFooter.mock.calls[0]?.[0](
 			{ requestRender: vi.fn() },
@@ -624,6 +628,46 @@ describe("extension registration", () => {
 
 			const completedText = h.overlays[0]?.component.render(44).join("\n") ?? "";
 			expect(completedText).toContain("TTFT 820ms · TPS 48.0");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("refreshes Workspace Pulse when a new Turn starts", async () => {
+		const h = harness();
+		await start(h);
+		await vi.waitFor(() => expect(h.pi.exec.mock.calls.length).toBeGreaterThan(0));
+		const inspectionsAfterStart = h.pi.exec.mock.calls.length;
+
+		await h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 0 }, h.ctx);
+
+		await vi.waitFor(() => expect(h.pi.exec).toHaveBeenCalledTimes(inspectionsAfterStart + 1));
+	});
+
+	it("coalesces rapid tool completions into one Workspace Pulse refresh", async () => {
+		vi.useFakeTimers();
+		try {
+			const h = harness();
+			await start(h);
+			const inspectionsAfterStart = h.pi.exec.mock.calls.length;
+
+			for (const toolCallId of ["one", "two", "three"]) {
+				await h.handlers.get("tool_execution_end")?.(
+					{
+						type: "tool_execution_end",
+						toolCallId,
+						toolName: "write",
+						result: { content: [] },
+						isError: false,
+					},
+					h.ctx,
+				);
+			}
+
+			await vi.advanceTimersByTimeAsync(249);
+			expect(h.pi.exec).toHaveBeenCalledTimes(inspectionsAfterStart);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(h.pi.exec).toHaveBeenCalledTimes(inspectionsAfterStart + 1);
 		} finally {
 			vi.useRealTimers();
 		}

@@ -65,6 +65,23 @@ const state: AtelierState = {
 	thinkingLevel: "medium",
 	branch: "main",
 	dirty: true,
+	workspacePulse: {
+		status: "changed",
+		data: {
+			root: "/repo",
+			relativeCwd: "",
+			branch: "main",
+			snapshot: {
+				trackedFiles: 1,
+				untrackedFiles: 0,
+				linesAdded: 1,
+				linesRemoved: 0,
+				binaryFiles: 0,
+				submodules: 0,
+				conflicts: 0,
+			},
+		},
+	},
 	metrics: {
 		usageAvailable: true,
 		costAvailable: true,

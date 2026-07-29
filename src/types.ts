@@ -1,3 +1,5 @@
+import type { WorkspacePulseData } from "./workspace-pulse.js";
+
 export type PresetName = "editorial" | "minimal" | "classic";
 export type ActivityState = "ready" | "working" | "warning" | "error";
 export type SegmentId = "brand" | "activity" | "metrics" | "context" | "model" | "git" | "statuses" | "menu";
@@ -35,6 +37,11 @@ export interface AtelierMetrics {
 	autoCompact: boolean | null;
 }
 
+export type WorkspacePulseState =
+	| { status: "inspecting" }
+	| { status: "clean" | "changed" | "conflict" | "stale"; data: WorkspacePulseData }
+	| { status: "not-repo" | "unavailable" };
+
 export interface AtelierState {
 	activity: ActivityState;
 	workingLabel?: string;
@@ -43,6 +50,7 @@ export interface AtelierState {
 	thinkingLevel?: string;
 	branch?: string;
 	dirty: boolean;
+	workspacePulse: WorkspacePulseState;
 	metrics: AtelierMetrics;
 	extensionStatuses: readonly string[];
 }

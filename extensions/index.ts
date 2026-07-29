@@ -328,13 +328,6 @@ export default function atelierExtension(
 					: { spawn: dependencies.spawnNotificationProcess }),
 			});
 			localCompletionNotifier = candidateCompletionNotifier;
-			await candidateRuntime.refreshGitState();
-			if (!isFresh()) {
-				localRunActivity.reset();
-				candidateCompletionNotifier.reset();
-				candidateRuntime.dispose();
-				return;
-			}
 			localSidebar = createSidebarController({
 				ctx: initializationContext,
 				getSnapshot: () => getSidebarSnapshot(initializationContext, candidateRuntime, localRunActivity),
@@ -428,6 +421,7 @@ export default function atelierExtension(
 				installFooter(initializationContext, candidateRuntime, initializationGeneration);
 				localSidebar.show();
 			}
+			void candidateRuntime.refreshWorkspacePulse();
 		} catch (error) {
 			localSidebar?.dispose();
 			localRunActivity.reset();
@@ -471,6 +465,7 @@ export default function atelierExtension(
 		if (!current?.runActivity) return;
 		current.runActivity.startTurn(event.turnIndex);
 		completionNotifier?.runStarted();
+		void current.runtime?.refreshWorkspacePulse();
 	});
 	pi.on("before_provider_request", (_event, ctx) => {
 		getCurrentContextState(ctx)?.runActivity?.startResponse();
@@ -493,6 +488,7 @@ export default function atelierExtension(
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity) return;
 		current.runActivity.finishTool(event);
+		current.runtime?.scheduleWorkspacePulseRefresh();
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
