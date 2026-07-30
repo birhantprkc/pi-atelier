@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-07-30
+
 - Add the responsive Display Settings Workspace with the real Status Rail preview, continuous preset/density/Segment editing, provenance, Session overrides, one-step Undo, Revert, and atomic User-default Save.
 - Replace the mixed root menu with a partitioned Atelier Control Center for Settings, Controls, and Actions, and add the direct `/atelier display` route.
 - Keep legacy `segments`, `ornament`, and `showExtensionStatuses` configuration load-compatible while making normalized `segmentLayout` the sole Brand and Statuses visibility source.
