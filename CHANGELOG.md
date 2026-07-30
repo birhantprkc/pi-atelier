@@ -1,12 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add an opt-in `performance` Status Rail segment for live TTFT and estimated/final TPS, while preserving the existing default presets.
+
 ## 0.6.0 — 2026-07-29
 
 - Add Workspace Pulse to summarize whole-worktree tracked changes, text additions/removals, count-only untracked files, binary files, changed submodules, and conflicts.
 - Keep inspecting, clean, non-repository, unavailable, and stale workspace states explicit while preserving the footer's compact dirty marker.
 - Refresh Workspace Pulse after debounced tool activity, Turn boundaries, and branch changes without polling, file watching, test execution, or untracked-content reads.
-
-- Add an opt-in `performance` Status Rail segment for live TTFT and estimated/final TPS, while preserving the existing default presets.
 
 ## 0.5.0 — 2026-07-27
 

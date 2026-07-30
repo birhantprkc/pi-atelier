@@ -640,6 +640,27 @@ describe("extension registration", () => {
 
 			expect(footerRequestRender).toHaveBeenCalled();
 			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~");
+
+			vi.setSystemTime(2_920);
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: "x".repeat(80) }] },
+					assistantMessageEvent: { type: "text_delta", delta: "more output" },
+				},
+				h.ctx,
+			);
+			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~20.0");
+
+			vi.setSystemTime(4_420);
+			await h.handlers.get("message_end")?.(
+				{
+					type: "message_end",
+					message: { role: "assistant", usage: { output: 120 } },
+				},
+				h.ctx,
+			);
+			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS 48.0");
 		} finally {
 			vi.useRealTimers();
 		}

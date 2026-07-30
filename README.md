@@ -193,7 +193,15 @@ Complete example:
 }
 ```
 
-Unknown or invalid values are ignored with one warning. The required `metrics` and `context` segments are restored if omitted. Add `"performance"` to `segments` to show `TTFT` and `TPS` in the Status Rail; the segment is opt-in and is omitted from all presets by default. During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Enabling the segment from **Toggle segments** appends it to the end of the rail; edit `segments` or use **Reorder segments** to place it elsewhere. The editorial preset always suppresses the brand ornament; `restrained` displays `ATELIER` only for non-editorial configurations that include the `brand` segment.
+Unknown or invalid values are ignored with one warning. The required `metrics` and `context` segments are restored if omitted. Add `"performance"` to `segments` to show `TTFT` and `TPS` in the Status Rail; the segment is opt-in and is omitted from all presets by default:
+
+```json
+{
+  "segments": ["activity", "metrics", "performance", "context", "model", "menu"]
+}
+```
+
+During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Enabling the segment from **Toggle segments** appends it to the end of the rail; edit `segments` or use **Reorder segments** to place it elsewhere. The editorial preset always suppresses the brand ornament; `restrained` displays `ATELIER` only for non-editorial configurations that include the `brand` segment.
 
 ## Presets
 
