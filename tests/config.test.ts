@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, saveUserConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
+import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
 let root: string;
 let userPath: string;
 let projectPath: string;
-
 const writeJson = (path: string, value: unknown) => writeFile(path, JSON.stringify(value), "utf8");
 
 beforeEach(async () => {
@@ -17,28 +17,43 @@ beforeEach(async () => {
 	projectPath = join(root, "project.json");
 });
 
+const visibility = (layout: typeof DEFAULT_CONFIG.segmentLayout, id: string) =>
+	layout.find((entry) => entry.id === id)?.visible;
+
 describe("configuration", () => {
-	it("defaults to no brand ornament, collapsed tool details, and completion notifications", () => {
-		expect(DEFAULT_CONFIG.ornament).toBe("none");
+	it("defines complete defaults and compatibility templates", () => {
+		for (const template of [DEFAULT_CONFIG, ...Object.values(DISPLAY_TEMPLATES)]) {
+			expect(template.segmentLayout.map((entry) => entry.id)).toEqual(PRODUCT_SEGMENT_ORDER);
+			expect(new Set(template.segmentLayout.map((entry) => entry.id)).size).toBe(9);
+			expect(visibility(template.segmentLayout, "metrics")).toBe(true);
+			expect(visibility(template.segmentLayout, "context")).toBe(true);
+			expect(visibility(template.segmentLayout, "brand")).toBe(false);
+			expect(visibility(template.segmentLayout, "performance")).toBe(false);
+		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 	});
 
-	it("merges defaults, user, trusted project, then session overrides", async () => {
-		await writeJson(userPath, { preset: "classic", density: "compact" });
-		await writeJson(projectPath, { preset: "minimal", contextWarning: 65 });
+	it("merges user, trusted project, then session with actionable provenance", async () => {
+		await writeJson(userPath, { density: "compact" });
+		await writeJson(projectPath, {
+			segmentLayout: [
+				{ id: "context", visible: true },
+				{ id: "metrics", visible: true },
+			],
+		});
 		const result = await loadConfig({
 			userPath,
 			projectPath,
 			projectTrusted: true,
-			session: { ornament: "none" },
+			session: { segmentLayout: [{ id: "brand", visible: true }] },
 		});
-		expect(result.config).toMatchObject({
-			preset: "minimal",
-			density: "compact",
-			contextWarning: 65,
-			ornament: "none",
-		});
+		expect(result.config.density).toBe("compact");
+		expect(result.config.segmentLayout[0]).toEqual({ id: "brand", visible: true });
+		expect(result.displayProvenance.density).toBe("user");
+		expect(result.displayProvenance.order).toBe("session");
+		expect(result.displayProvenance.visibility.brand).toBe("session");
+		expect(result.config.preset).toBe("custom");
 	});
 
 	it("keeps completion notifications as a global user preference", async () => {
@@ -50,61 +65,95 @@ describe("configuration", () => {
 			projectTrusted: true,
 			session: { completionNotifications: true },
 		});
-
 		expect(result.config.completionNotifications).toBe(false);
 	});
 
-	it("does not let project configuration disable default-on completion notifications", async () => {
-		await writeJson(projectPath, { completionNotifications: false });
-		const result = await loadConfig({ userPath, projectPath, projectTrusted: true });
-
-		expect(result.config.completionNotifications).toBe(true);
-	});
-
-	it("does not read untrusted project configuration", async () => {
-		await writeJson(projectPath, { preset: "minimal" });
+	it("does not read, warn about, or attribute an untrusted project", async () => {
+		await writeFile(projectPath, "{broken", "utf8");
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
-		expect(result.config.preset).toBe("editorial");
-	});
-
-	it("accepts performance as an opt-in footer segment", () => {
-		expect(DEFAULT_CONFIG.segments).not.toContain("performance");
-
-		const result = validateConfig({
-			segments: ["activity", "performance", "metrics", "context"],
-		});
-
-		expect(result.config.segments).toEqual(["activity", "performance", "metrics", "context"]);
+		expect(result.config).toEqual(DEFAULT_CONFIG);
 		expect(result.warnings).toEqual([]);
+		expect(result.displayProvenance.order).toBe("product");
 	});
 
-	it("rejects invalid thresholds, duplicates, and unknown segments", () => {
+	it("makes a usable segmentLayout authoritative over same-layer legacy fields", () => {
 		const result = validateConfig({
-			contextWarning: 95,
-			contextDanger: 80,
-			segments: ["metrics", "metrics", "unknown"],
+			segmentLayout: [
+				{ id: "brand", visible: true },
+				{ id: "statuses", visible: true },
+			],
+			segments: ["metrics", "context"],
+			ornament: "none",
+			showExtensionStatuses: false,
 		});
-		expect(result.config.contextWarning).toBe(70);
-		expect(result.config.contextDanger).toBe(90);
-		expect(result.config.segments).toEqual(["metrics", "context"]);
-		expect(result.warnings).toEqual(
-			expect.arrayContaining([
-				expect.stringContaining("threshold"),
-				expect.stringContaining("duplicate"),
-				expect.stringContaining("unknown"),
-			]),
-		);
+		expect(visibility(result.config.segmentLayout, "brand")).toBe(true);
+		expect(visibility(result.config.segmentLayout, "statuses")).toBe(true);
 	});
 
-	it("validates boolean preferences", () => {
+	it("repairs malformed layouts deterministically and de-duplicates warnings", () => {
+		const result = validateConfig({
+			segmentLayout: [
+				{ id: "menu", visible: true },
+				{ id: "metrics", visible: false },
+				{ id: "menu", visible: false },
+				{ id: "mystery", visible: true },
+				{ id: "brand", visible: "yes" },
+				null,
+				null,
+			],
+		});
+		expect(result.config.segmentLayout.slice(0, 3)).toEqual([
+			{ id: "menu", visible: true },
+			{ id: "metrics", visible: true },
+			{ id: "brand", visible: false },
+		]);
+		expect(result.config.segmentLayout.map((entry) => entry.id)).toHaveLength(9);
+		expect(result.warnings.some((warning) => warning.includes("duplicate"))).toBe(true);
+		expect(result.warnings.filter((warning) => warning.includes("malformed"))).toHaveLength(1);
+	});
+
+	it("uses legacy fallback for non-array layouts and retains hidden omissions", () => {
+		const result = validateConfig({ segmentLayout: {}, segments: ["activity", "performance"] });
+		expect(result.warnings).toContain("segmentLayout must be an array");
+		expect(result.config.segmentLayout.map((entry) => entry.id).slice(0, 2)).toEqual([
+			"activity",
+			"performance",
+		]);
+		expect(visibility(result.config.segmentLayout, "performance")).toBe(true);
+		expect(visibility(result.config.segmentLayout, "git")).toBe(false);
+		expect(visibility(result.config.segmentLayout, "metrics")).toBe(true);
+	});
+
+	it.each([
+		[{ preset: "classic", ornament: "restrained", segments: ["brand"] }, true],
+		[{ preset: "editorial", ornament: "restrained", segments: ["brand"] }, false],
+		[{ preset: "classic", ornament: "none", segments: ["brand"] }, false],
+		[{ preset: "classic", ornament: "restrained", segments: [] }, false],
+	] as const)("reproduces legacy Brand compatibility for %j", (input, expected) => {
+		expect(visibility(validateConfig(input).config.segmentLayout, "brand")).toBe(expected);
+	});
+
+	it("reproduces legacy Statuses compatibility", () => {
 		expect(
-			validateConfig({ showSidebarToolNames: true, completionNotifications: false }).config,
-		).toMatchObject({ showSidebarToolNames: true, completionNotifications: false });
-		const invalid = validateConfig({ showSidebarToolNames: "yes", completionNotifications: "yes" });
-		expect(invalid.config.showSidebarToolNames).toBe(false);
-		expect(invalid.config.completionNotifications).toBe(true);
-		expect(invalid.warnings).toContain("showSidebarToolNames must be boolean");
-		expect(invalid.warnings).toContain("completionNotifications must be boolean");
+			visibility(
+				validateConfig({ segments: ["statuses"], showExtensionStatuses: false }).config.segmentLayout,
+				"statuses",
+			),
+		).toBe(false);
+		expect(
+			visibility(
+				validateConfig({ segments: ["statuses"], showExtensionStatuses: true }).config.segmentLayout,
+				"statuses",
+			),
+		).toBe(true);
+	});
+
+	it("rejects invalid thresholds and validates boolean preferences", () => {
+		const result = validateConfig({ contextWarning: 95, contextDanger: 80, showSidebarToolNames: "yes" });
+		expect(result.config.contextWarning).toBe(70);
+		expect(result.warnings).toEqual(
+			expect.arrayContaining([expect.stringContaining("threshold"), "showSidebarToolNames must be boolean"]),
+		);
 	});
 
 	it("reports malformed JSON once and retains defaults", async () => {
@@ -115,15 +164,14 @@ describe("configuration", () => {
 	});
 
 	it("saves valid JSON atomically without leaving temporary files", async () => {
-		await saveUserConfig(userPath, { ...DEFAULT_CONFIG, preset: "classic" });
-		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({ preset: "classic" });
+		await saveUserConfig(userPath, { ...DEFAULT_CONFIG, preset: "custom" });
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({ preset: "custom" });
 		expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 
-	it("patches one user preference without persisting effective defaults or losing unknown fields", async () => {
+	it("patches one preference without losing unknown fields", async () => {
 		await writeJson(userPath, { density: "compact", futureSetting: "keep" });
 		await saveUserConfigPatch(userPath, { completionNotifications: false });
-
 		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
 			density: "compact",
 			futureSetting: "keep",

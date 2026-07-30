@@ -1,8 +1,17 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { selectWorkingPhrase } from "./activity.js";
+import { resolveDisplayLayers } from "./config.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
-import type { ActivityState, AtelierConfig, AtelierState } from "./types.js";
+import type {
+	ActivityState,
+	AtelierConfig,
+	AtelierState,
+	DisplayLayerState,
+	DisplayPatch,
+	DisplayProvenance,
+	DisplaySettings,
+} from "./types.js";
 import {
 	inspectWorkspacePulse,
 	type WorkspacePulseData,
@@ -15,6 +24,8 @@ export interface RuntimeDependencies {
 	pi: ExtensionAPI;
 	ctx: ExtensionContext;
 	config: AtelierConfig;
+	displayLayers?: DisplayLayerState;
+	displayProvenance?: DisplayProvenance;
 	autoCompact: boolean | null;
 	random?: () => number;
 	requestRender(): void;
@@ -29,6 +40,8 @@ export class AtelierRuntime {
 	readonly #requestRender: () => void;
 	readonly #inspectWorkspace: () => Promise<WorkspacePulseInspection>;
 	#config: AtelierConfig;
+	#displayLayers: DisplayLayerState;
+	#displayProvenance: DisplayProvenance;
 	#disposed = false;
 	#workspaceRefreshGeneration = 0;
 	#workspaceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
@@ -39,6 +52,9 @@ export class AtelierRuntime {
 		this.#pi = dependencies.pi;
 		this.#ctx = dependencies.ctx;
 		this.#config = dependencies.config;
+		this.#displayLayers = dependencies.displayLayers ?? {};
+		this.#displayProvenance =
+			dependencies.displayProvenance ?? resolveDisplayLayers(this.#displayLayers).provenance;
 		this.#autoCompact = dependencies.autoCompact;
 		this.#random = dependencies.random ?? Math.random;
 		this.#requestRender = dependencies.requestRender;
@@ -66,6 +82,34 @@ export class AtelierRuntime {
 
 	getConfig(): AtelierConfig {
 		return this.#config;
+	}
+
+	getDisplaySettings(): DisplaySettings {
+		return {
+			preset: this.#config.preset,
+			density: this.#config.density,
+			segmentLayout: this.#config.segmentLayout.map((entry) => ({ ...entry })),
+		};
+	}
+
+	getDisplayProvenance(): DisplayProvenance {
+		return { ...this.#displayProvenance, visibility: { ...this.#displayProvenance.visibility } };
+	}
+
+	setSessionDisplayPatch(patch: DisplayPatch | undefined): void {
+		if (patch) {
+			this.#displayLayers = {
+				...this.#displayLayers,
+				session: { ...this.#displayLayers.session, ...patch },
+			};
+		} else {
+			const { session: _session, ...lowerLayers } = this.#displayLayers;
+			this.#displayLayers = lowerLayers;
+		}
+		const resolved = resolveDisplayLayers(this.#displayLayers);
+		this.#displayProvenance = resolved.provenance;
+		this.#config = { ...this.#config, ...resolved.display };
+		this.#invalidate();
 	}
 
 	setConfig(config: AtelierConfig): void {

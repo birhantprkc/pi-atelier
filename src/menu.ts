@@ -14,8 +14,9 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { saveUserConfig, saveUserConfigPatch } from "./config.js";
+import { applyDisplayTemplate, reorderSegment, toggleSegmentVisibility } from "./display.js";
 import type { AtelierRuntime } from "./state.js";
-import { DEFAULT_CONFIG, type AtelierConfig, type PresetName, type SegmentId } from "./types.js";
+import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
 
 export type SaveConfig = typeof saveUserConfig;
 export type SaveConfigPatch = typeof saveUserConfigPatch;
@@ -48,28 +49,15 @@ export function renderMenuFrame(theme: MenuTheme, lines: string[], width: number
 	return [border(`┏${"━".repeat(innerWidth)}┓`), ...framed, border(`┗${"━".repeat(innerWidth)}┛`)];
 }
 
-const PRESET_CONFIG: Record<PresetName, Partial<AtelierConfig>> = {
-	editorial: DEFAULT_CONFIG,
-	minimal: {
-		preset: "minimal",
-		segments: ["activity", "metrics", "context", "model", "menu"],
-		density: "compact",
-		ornament: "none",
-	},
-	classic: {
-		preset: "classic",
-		segments: ["metrics", "context", "model", "git", "statuses"],
-		density: "comfortable",
-		ornament: "none",
-	},
-};
-
 export function createMenuActions(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	runtime: Pick<AtelierRuntime, "getConfig" | "setConfig" | "refreshUsage">,
+	runtime: Pick<
+		AtelierRuntime,
+		"getConfig" | "setConfig" | "getDisplaySettings" | "setSessionDisplayPatch" | "refreshUsage"
+	>,
 	userConfigPath: string,
-	save: SaveConfig = saveUserConfig,
+	_save: SaveConfig = saveUserConfig,
 	savePatch: SaveConfigPatch = saveUserConfigPatch,
 ) {
 	return {
@@ -123,14 +111,20 @@ export function createMenuActions(
 				);
 			}
 		},
-		setPreset(preset: PresetName): void {
-			runtime.setConfig({ ...runtime.getConfig(), ...PRESET_CONFIG[preset], preset });
+		setPreset(preset: TemplateName): void {
+			runtime.setSessionDisplayPatch(applyDisplayTemplate(preset));
 		},
 		setDensity(density: AtelierConfig["density"]): void {
-			runtime.setConfig({ ...runtime.getConfig(), density });
+			runtime.setSessionDisplayPatch({ density });
 		},
-		setOrnament(ornament: AtelierConfig["ornament"]): void {
-			runtime.setConfig({ ...runtime.getConfig(), ornament });
+		setOrnament(ornament: Ornament): void {
+			runtime.setSessionDisplayPatch({
+				segmentLayout: toggleSegmentVisibility(
+					runtime.getDisplaySettings().segmentLayout,
+					"brand",
+					ornament === "restrained",
+				),
+			});
 		},
 		async setCompletionNotifications(enabled: boolean): Promise<void> {
 			runtime.setConfig({ ...runtime.getConfig(), completionNotifications: enabled });
@@ -147,23 +141,28 @@ export function createMenuActions(
 			}
 		},
 		moveSegment(id: SegmentId, direction: "earlier" | "later"): void {
-			const segments = [...runtime.getConfig().segments];
-			const index = segments.indexOf(id);
-			const target = direction === "earlier" ? index - 1 : index + 1;
-			if (index < 0 || target < 0 || target >= segments.length) return;
-			[segments[index], segments[target]] = [segments[target] as SegmentId, segments[index] as SegmentId];
-			runtime.setConfig({ ...runtime.getConfig(), segments });
+			runtime.setSessionDisplayPatch({
+				segmentLayout: reorderSegment(runtime.getDisplaySettings().segmentLayout, id, direction),
+			});
 		},
 		setSegments(segments: SegmentId[]): void {
-			const required: SegmentId[] = [...segments, "metrics", "context"];
-			runtime.setConfig({
-				...runtime.getConfig(),
-				segments: [...new Set<SegmentId>(required)],
+			const selected = new Set(segments);
+			let layout = runtime
+				.getDisplaySettings()
+				.segmentLayout.map((entry) => ({ ...entry, visible: selected.has(entry.id) }));
+			layout = toggleSegmentVisibility(layout, "metrics", true);
+			layout = toggleSegmentVisibility(layout, "context", true);
+			runtime.setSessionDisplayPatch({ segmentLayout: layout });
+		},
+		toggleSegment(id: SegmentId): void {
+			runtime.setSessionDisplayPatch({
+				segmentLayout: toggleSegmentVisibility(runtime.getDisplaySettings().segmentLayout, id),
 			});
 		},
 		async saveDisplayDefaults(): Promise<void> {
 			try {
-				await save(userConfigPath, runtime.getConfig());
+				const display = runtime.getDisplaySettings();
+				await savePatch(userConfigPath, display);
 				ctx.ui.notify("Pi Atelier display defaults saved", "info");
 			} catch (error) {
 				ctx.ui.notify(
@@ -374,9 +373,9 @@ export async function openAtelierMenu(
 				"Save as user default",
 				"Back",
 			]);
-			if (action?.endsWith("preset")) actions.setPreset(action.split(" ")[0]?.toLowerCase() as PresetName);
+			if (action?.endsWith("preset")) actions.setPreset(action.split(" ")[0]?.toLowerCase() as TemplateName);
 			else if (action === "Toggle segments") {
-				const current = runtime.getConfig().segments;
+				const current = runtime.getDisplaySettings().segmentLayout;
 				const optional: SegmentId[] = [
 					"brand",
 					"activity",
@@ -386,26 +385,27 @@ export async function openAtelierMenu(
 					"statuses",
 					"menu",
 				];
-				const labels = optional.map((id) => `${current.includes(id) ? "✓" : "○"} ${id}`);
+				const labels = optional.map(
+					(id) => `${current.find((entry) => entry.id === id)?.visible ? "✓" : "○"} ${id}`,
+				);
 				const selected = await ctx.ui.select("Toggle footer segment", labels);
 				const id = optional[labels.indexOf(selected ?? "")];
-				if (id)
-					actions.setSegments(
-						current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-					);
+				if (id) actions.toggleSegment(id);
 			} else if (action === "Reorder segments") {
-				const current = runtime.getConfig().segments;
-				const selected = await ctx.ui.select("Choose segment", current);
+				const current = runtime.getDisplaySettings().segmentLayout;
+				const labels = current.map((entry) => `${entry.visible ? "✓" : "○"} ${entry.id}`);
+				const selected = await ctx.ui.select("Choose segment", labels);
 				if (selected) {
 					const direction = await ctx.ui.select("Move segment", ["earlier", "later"]);
-					if (direction) actions.moveSegment(selected as SegmentId, direction as "earlier" | "later");
+					const id = current[labels.indexOf(selected)]?.id;
+					if (direction && id) actions.moveSegment(id, direction as "earlier" | "later");
 				}
 			} else if (action === "Density") {
 				const density = await ctx.ui.select("Footer density", ["comfortable", "compact"]);
 				if (density) actions.setDensity(density as AtelierConfig["density"]);
 			} else if (action === "Ornament") {
 				const ornament = await ctx.ui.select("Footer ornament", ["restrained", "none"]);
-				if (ornament) actions.setOrnament(ornament as AtelierConfig["ornament"]);
+				if (ornament) actions.setOrnament(ornament as Ornament);
 			} else if (action === "Save as user default") await actions.saveDisplayDefaults();
 		} else if (section === "session") {
 			const options = runtime.getConfig().showSessionActions

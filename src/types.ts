@@ -1,6 +1,7 @@
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
-export type PresetName = "editorial" | "minimal" | "classic";
+export type TemplateName = "editorial" | "minimal" | "classic";
+export type PresetName = TemplateName | "custom";
 export type ActivityState = "ready" | "working" | "warning" | "error";
 export type SegmentId =
 	| "brand"
@@ -13,7 +14,40 @@ export type SegmentId =
 	| "statuses"
 	| "menu";
 export type Density = "comfortable" | "compact";
+/** Legacy menu vocabulary. Ornament is translated to Brand visibility. */
 export type Ornament = "none" | "restrained";
+export type ConfigurationSource = "product" | "user" | "project" | "session";
+
+export interface SegmentLayoutEntry {
+	id: SegmentId;
+	visible: boolean;
+}
+export type SegmentLayout = SegmentLayoutEntry[];
+
+export interface DisplaySettings {
+	preset: PresetName;
+	density: Density;
+	segmentLayout: SegmentLayout;
+}
+
+export interface DisplayPatch {
+	preset?: PresetName;
+	density?: Density;
+	segmentLayout?: SegmentLayout;
+}
+
+export interface DisplayProvenance {
+	preset: ConfigurationSource;
+	density: ConfigurationSource;
+	order: ConfigurationSource;
+	visibility: Record<SegmentId, ConfigurationSource>;
+}
+
+export interface DisplayLayerState {
+	user?: Record<string, unknown>;
+	project?: Record<string, unknown>;
+	session?: Record<string, unknown>;
+}
 
 export interface ResponsePerformance {
 	ttftMs: number;
@@ -26,16 +60,11 @@ export interface DisplayValue {
 	available: boolean;
 }
 
-export interface AtelierConfig {
-	preset: PresetName;
+export interface AtelierConfig extends DisplaySettings {
 	shortcut: string;
-	segments: SegmentId[];
-	density: Density;
-	ornament: Ornament;
 	contextWarning: number;
 	contextDanger: number;
 	currencyDecimals: number;
-	showExtensionStatuses: boolean;
 	showSessionActions: boolean;
 	showSidebarToolNames: boolean;
 	completionNotifications: boolean;
@@ -83,13 +112,21 @@ export interface FooterState extends AtelierState {
 export const DEFAULT_CONFIG: AtelierConfig = {
 	preset: "editorial",
 	shortcut: "alt+a",
-	segments: ["brand", "activity", "metrics", "context", "model", "git", "statuses", "menu"],
+	segmentLayout: [
+		{ id: "brand", visible: false },
+		{ id: "activity", visible: true },
+		{ id: "metrics", visible: true },
+		{ id: "performance", visible: false },
+		{ id: "context", visible: true },
+		{ id: "model", visible: true },
+		{ id: "git", visible: true },
+		{ id: "statuses", visible: true },
+		{ id: "menu", visible: true },
+	],
 	density: "comfortable",
-	ornament: "none",
 	contextWarning: 70,
 	contextDanger: 90,
 	currencyDecimals: 3,
-	showExtensionStatuses: true,
 	showSessionActions: true,
 	showSidebarToolNames: false,
 	completionNotifications: true,

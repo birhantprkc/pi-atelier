@@ -1,128 +1,318 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { DEFAULT_CONFIG, type AtelierConfig, type SegmentId } from "./types.js";
+import {
+	derivePresetIdentity,
+	isSegmentId,
+	legacySegmentsToLayout,
+	normalizeSegmentLayout,
+	PRODUCT_SEGMENT_ORDER,
+} from "./display.js";
+import {
+	DEFAULT_CONFIG,
+	type AtelierConfig,
+	type ConfigurationSource,
+	type DisplayLayerState,
+	type DisplayProvenance,
+	type DisplaySettings,
+	type PresetName,
+	type SegmentId,
+	type SegmentLayout,
+} from "./types.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;
 	warnings: string[];
+	displayLayers: DisplayLayerState;
+	displayProvenance: DisplayProvenance;
 }
 
 export interface LoadConfigOptions {
 	userPath: string;
 	projectPath: string;
 	projectTrusted: boolean;
-	session?: Partial<AtelierConfig>;
+	session?: Record<string, unknown> | Partial<AtelierConfig>;
 }
 
-const presets = new Set(["editorial", "minimal", "classic"]);
+const presets = new Set<PresetName>(["editorial", "minimal", "classic", "custom"]);
 const densities = new Set(["comfortable", "compact"]);
 const ornaments = new Set(["none", "restrained"]);
-const segmentIds = new Set<SegmentId>([
-	"brand",
-	"activity",
-	"metrics",
-	"performance",
-	"context",
-	"model",
-	"git",
-	"statuses",
-	"menu",
-]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
-export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
-	const config: AtelierConfig = { ...base, segments: [...base.segments] };
+const record = (value: unknown): Record<string, unknown> | undefined => (isRecord(value) ? value : undefined);
+const cloneConfig = (config: AtelierConfig): AtelierConfig => ({
+	...config,
+	segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
+});
+
+interface CompatibilityState {
+	preset: PresetName;
+	ornament: "none" | "restrained";
+	brandListed: boolean;
+	statusesListed: boolean;
+	showStatuses: boolean;
+}
+
+interface DisplayResolution {
+	display: DisplaySettings;
+	provenance: DisplayProvenance;
+	warnings: string[];
+}
+
+function parsePersistedLayout(value: unknown, warnings: string[]): SegmentLayout | undefined {
+	if (!Array.isArray(value)) {
+		warnings.push("segmentLayout must be an array");
+		return undefined;
+	}
+	const seen = new Set<SegmentId>();
+	const entries: SegmentLayout = [];
+	for (const item of value) {
+		if (!isRecord(item) || !isSegmentId(item.id)) {
+			warnings.push(
+				isRecord(item) && "id" in item
+					? `Unknown segmentLayout segment: ${String(item.id)}`
+					: "Ignoring malformed segmentLayout entry",
+			);
+			continue;
+		}
+		if (seen.has(item.id)) {
+			warnings.push(`Ignoring duplicate segmentLayout segment: ${item.id}`);
+			continue;
+		}
+		seen.add(item.id);
+		let visible = item.visible;
+		if (typeof visible !== "boolean") {
+			warnings.push(`segmentLayout visibility for ${item.id} must be boolean; using hidden`);
+			visible = false;
+		}
+		entries.push({ id: item.id, visible: visible === true });
+	}
+	return normalizeSegmentLayout(entries);
+}
+
+function parseLegacySegments(value: unknown, warnings: string[]): SegmentLayout | undefined {
+	if (!Array.isArray(value)) {
+		warnings.push("segments must be an array");
+		return undefined;
+	}
+	const seen = new Set<SegmentId>();
+	const valid: SegmentId[] = [];
+	for (const item of value) {
+		if (!isSegmentId(item)) {
+			warnings.push(`Unknown segment: ${String(item)}`);
+			continue;
+		}
+		if (seen.has(item)) {
+			warnings.push(`Ignoring duplicate segment: ${item}`);
+			continue;
+		}
+		seen.add(item);
+		valid.push(item);
+	}
+	return legacySegmentsToLayout(valid);
+}
+
+export function resolveDisplayLayers(layers: DisplayLayerState): DisplayResolution {
+	let display: DisplaySettings = {
+		preset: DEFAULT_CONFIG.preset,
+		density: DEFAULT_CONFIG.density,
+		segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry })),
+	};
+	const visibility = Object.fromEntries(PRODUCT_SEGMENT_ORDER.map((id) => [id, "product"])) as Record<
+		SegmentId,
+		ConfigurationSource
+	>;
+	const provenance: DisplayProvenance = {
+		preset: "product",
+		density: "product",
+		order: "product",
+		visibility,
+	};
+	const compatibility: CompatibilityState = {
+		preset: "editorial",
+		ornament: "none",
+		brandListed: true,
+		statusesListed: true,
+		showStatuses: true,
+	};
 	const warnings: string[] = [];
+
+	for (const [source, input] of [
+		["user", layers.user],
+		["project", layers.project],
+		["session", layers.session],
+	] as const) {
+		if (!input) continue;
+		let changedTemplateField = false;
+		let suppliedPreset = false;
+		if ("preset" in input) {
+			if (typeof input.preset === "string" && presets.has(input.preset as PresetName)) {
+				compatibility.preset = input.preset as PresetName;
+				display.preset = input.preset as PresetName;
+				provenance.preset = source;
+				suppliedPreset = true;
+			} else
+				warnings.push(
+					typeof input.preset === "string" ? `Unknown preset: ${input.preset}` : "preset must be a string",
+				);
+		}
+		if ("density" in input) {
+			if (typeof input.density === "string" && densities.has(input.density)) {
+				display.density = input.density as AtelierConfig["density"];
+				provenance.density = source;
+				changedTemplateField = true;
+			} else
+				warnings.push(
+					typeof input.density === "string"
+						? `Unknown density: ${input.density}`
+						: "density must be a string",
+				);
+		}
+
+		let authoritative = false;
+		let legacySegmentsApplied = false;
+		if ("segmentLayout" in input) {
+			const parsed = parsePersistedLayout(input.segmentLayout, warnings);
+			if (parsed) {
+				display.segmentLayout = parsed;
+				provenance.order = source;
+				for (const id of PRODUCT_SEGMENT_ORDER) provenance.visibility[id] = source;
+				compatibility.brandListed = parsed.find((entry) => entry.id === "brand")?.visible ?? false;
+				compatibility.statusesListed = parsed.find((entry) => entry.id === "statuses")?.visible ?? false;
+				authoritative = true;
+				changedTemplateField = true;
+			}
+		}
+		if (!authoritative && "segments" in input) {
+			const parsed = parseLegacySegments(input.segments, warnings);
+			if (parsed) {
+				display.segmentLayout = parsed;
+				provenance.order = source;
+				for (const id of PRODUCT_SEGMENT_ORDER) provenance.visibility[id] = source;
+				compatibility.brandListed = parsed.find((entry) => entry.id === "brand")?.visible ?? false;
+				compatibility.statusesListed = parsed.find((entry) => entry.id === "statuses")?.visible ?? false;
+				changedTemplateField = true;
+				legacySegmentsApplied = true;
+			}
+		}
+
+		if (!authoritative) {
+			let brandCompatibilityChanged = suppliedPreset || legacySegmentsApplied;
+			if ("ornament" in input) {
+				if (typeof input.ornament === "string" && ornaments.has(input.ornament)) {
+					compatibility.ornament = input.ornament as CompatibilityState["ornament"];
+					brandCompatibilityChanged = true;
+				} else
+					warnings.push(
+						typeof input.ornament === "string"
+							? `Unknown ornament: ${input.ornament}`
+							: "ornament must be a string",
+					);
+			}
+			if (brandCompatibilityChanged) {
+				const brand = display.segmentLayout.find((entry) => entry.id === "brand");
+				if (brand)
+					brand.visible =
+						compatibility.brandListed &&
+						compatibility.preset !== "editorial" &&
+						compatibility.ornament === "restrained";
+				provenance.visibility.brand = source;
+				changedTemplateField = true;
+			}
+			let statusesCompatibilityChanged = legacySegmentsApplied;
+			if ("showExtensionStatuses" in input) {
+				if (typeof input.showExtensionStatuses === "boolean") {
+					compatibility.showStatuses = input.showExtensionStatuses;
+					statusesCompatibilityChanged = true;
+				} else warnings.push("showExtensionStatuses must be boolean");
+			}
+			if (statusesCompatibilityChanged) {
+				const statuses = display.segmentLayout.find((entry) => entry.id === "statuses");
+				if (statuses) statuses.visible = compatibility.statusesListed && compatibility.showStatuses;
+				provenance.visibility.statuses = source;
+				changedTemplateField = true;
+			}
+		}
+
+		const identity = derivePresetIdentity(display);
+		if (identity !== display.preset) {
+			display.preset = identity;
+			if (changedTemplateField) provenance.preset = source;
+		}
+	}
+	return { display, provenance, warnings: [...new Set(warnings)] };
+}
+
+function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string[]): void {
 	if (!isRecord(input)) {
 		if (input !== undefined) warnings.push("Configuration must be a JSON object");
-		return { config, warnings };
+		return;
 	}
-
-	if (typeof input.preset === "string") {
-		if (presets.has(input.preset)) config.preset = input.preset as AtelierConfig["preset"];
-		else warnings.push(`Unknown preset: ${input.preset}`);
-	} else if ("preset" in input) warnings.push("preset must be a string");
 	if (typeof input.shortcut === "string") {
 		if (input.shortcut.trim()) config.shortcut = input.shortcut.trim();
 		else warnings.push("Shortcut cannot be empty");
 	} else if ("shortcut" in input) warnings.push("shortcut must be a string");
-	if (typeof input.density === "string") {
-		if (densities.has(input.density)) config.density = input.density as AtelierConfig["density"];
-		else warnings.push(`Unknown density: ${input.density}`);
-	} else if ("density" in input) warnings.push("density must be a string");
-	if (typeof input.ornament === "string") {
-		if (ornaments.has(input.ornament)) config.ornament = input.ornament as AtelierConfig["ornament"];
-		else warnings.push(`Unknown ornament: ${input.ornament}`);
-	} else if ("ornament" in input) warnings.push("ornament must be a string");
-
-	if (Array.isArray(input.segments)) {
-		const seen = new Set<string>();
-		const valid: SegmentId[] = [];
-		for (const value of input.segments) {
-			if (typeof value !== "string" || !segmentIds.has(value as SegmentId)) {
-				warnings.push(`Unknown segment: ${String(value)}`);
-				continue;
-			}
-			if (seen.has(value)) {
-				warnings.push(`Ignoring duplicate segment: ${value}`);
-				continue;
-			}
-			seen.add(value);
-			valid.push(value as SegmentId);
-		}
-		for (const required of ["metrics", "context"] as const) {
-			if (!seen.has(required)) valid.push(required);
-		}
-		config.segments = valid;
-	} else if ("segments" in input) warnings.push("segments must be an array");
-
 	const invalidThresholdType =
 		("contextWarning" in input && typeof input.contextWarning !== "number") ||
 		("contextDanger" in input && typeof input.contextDanger !== "number");
 	const warning = typeof input.contextWarning === "number" ? input.contextWarning : config.contextWarning;
 	const danger = typeof input.contextDanger === "number" ? input.contextDanger : config.contextDanger;
-	if (invalidThresholdType) {
-		warnings.push("context thresholds must be numbers");
-	} else if (warning >= 0 && warning < danger && danger <= 100) {
+	if (invalidThresholdType) warnings.push("context thresholds must be numbers");
+	else if (warning >= 0 && warning < danger && danger <= 100) {
 		config.contextWarning = warning;
 		config.contextDanger = danger;
-	} else if ("contextWarning" in input || "contextDanger" in input) {
+	} else if ("contextWarning" in input || "contextDanger" in input)
 		warnings.push("Invalid context threshold ordering; expected 0 <= warning < danger <= 100");
-	}
-
 	if (typeof input.currencyDecimals === "number") {
 		if (
 			Number.isInteger(input.currencyDecimals) &&
 			input.currencyDecimals >= 0 &&
 			input.currencyDecimals <= 6
-		) {
+		)
 			config.currencyDecimals = input.currencyDecimals;
-		} else warnings.push("currencyDecimals must be an integer from 0 through 6");
+		else warnings.push("currencyDecimals must be an integer from 0 through 6");
 	}
-	for (const key of [
-		"showExtensionStatuses",
-		"showSessionActions",
-		"showSidebarToolNames",
-		"completionNotifications",
-	] as const) {
+	for (const key of ["showSessionActions", "showSidebarToolNames", "completionNotifications"] as const) {
 		if (typeof input[key] === "boolean") config[key] = input[key];
 		else if (key in input) warnings.push(`${key} must be boolean`);
 	}
-	return { config, warnings };
 }
 
-export function mergeConfig(...layers: unknown[]): ConfigLoadResult {
-	let config = { ...DEFAULT_CONFIG, segments: [...DEFAULT_CONFIG.segments] };
+export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
+	const config = cloneConfig(base);
 	const warnings: string[] = [];
-	for (const layer of layers) {
-		if (layer === undefined) continue;
-		const result = validateConfig(layer, config);
-		config = result.config;
-		warnings.push(...result.warnings);
-	}
-	return { config, warnings: [...new Set(warnings)] };
+	applyNonDisplay(input, config, warnings);
+	const inputRecord = record(input);
+	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
+	const resolved = resolveDisplayLayers(displayLayers);
+	Object.assign(config, resolved.display);
+	return {
+		config,
+		warnings: [...new Set([...warnings, ...resolved.warnings])],
+		displayLayers,
+		displayProvenance: resolved.provenance,
+	};
+}
+
+export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
+	const config = cloneConfig(DEFAULT_CONFIG);
+	const warnings: string[] = [];
+	for (const input of inputs) applyNonDisplay(input, config, warnings);
+	const records = inputs.map(record).filter((item): item is Record<string, unknown> => !!item);
+	const displayLayers: DisplayLayerState = {
+		...(records[0] ? { user: records[0] } : {}),
+		...(records[1] ? { project: records[1] } : {}),
+		...(records[2] ? { session: records[2] } : {}),
+	};
+	const resolved = resolveDisplayLayers(displayLayers);
+	Object.assign(config, resolved.display);
+	return {
+		config,
+		warnings: [...new Set([...warnings, ...resolved.warnings])],
+		displayLayers,
+		displayProvenance: resolved.provenance,
+	};
 }
 
 async function readJson(path: string): Promise<{ value?: unknown; warning?: string }> {
@@ -137,22 +327,42 @@ async function readJson(path: string): Promise<{ value?: unknown; warning?: stri
 export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoadResult> {
 	const user = await readJson(options.userPath);
 	const project = options.projectTrusted ? await readJson(options.projectPath) : {};
-	const result = mergeConfig(user.value, project.value, options.session);
-	result.config.completionNotifications = validateConfig(user.value).config.completionNotifications;
+	const config = cloneConfig(DEFAULT_CONFIG);
+	const warnings: string[] = [];
+	applyNonDisplay(user.value, config, warnings);
+	if (options.projectTrusted) applyNonDisplay(project.value, config, warnings);
+	applyNonDisplay(options.session, config, warnings);
+	const userRecord = record(user.value);
+	const projectRecord = options.projectTrusted ? record(project.value) : undefined;
+	const sessionRecord = record(options.session);
+	const displayLayers: DisplayLayerState = {
+		...(userRecord ? { user: userRecord } : {}),
+		...(projectRecord ? { project: projectRecord } : {}),
+		...(sessionRecord ? { session: sessionRecord } : {}),
+	};
+	const resolved = resolveDisplayLayers(displayLayers);
+	Object.assign(config, resolved.display);
+	// Completion notifications are intentionally global-user-only.
+	const global = cloneConfig(DEFAULT_CONFIG);
+	applyNonDisplay(user.value, global, []);
+	config.completionNotifications = global.completionNotifications;
 	return {
-		config: result.config,
+		config,
 		warnings: [
 			...new Set(
-				[user.warning, project.warning, ...result.warnings].filter((item): item is string => !!item),
+				[user.warning, project.warning, ...warnings, ...resolved.warnings].filter(
+					(item): item is string => !!item,
+				),
 			),
 		],
+		displayLayers,
+		displayProvenance: resolved.provenance,
 	};
 }
 
 export async function saveUserConfig(path: string, config: AtelierConfig): Promise<void> {
 	await writeJsonAtomic(path, config);
 }
-
 export async function saveUserConfigPatch(path: string, patch: Partial<AtelierConfig>): Promise<void> {
 	let current: Record<string, unknown> = {};
 	try {
@@ -164,15 +374,11 @@ export async function saveUserConfigPatch(path: string, patch: Partial<AtelierCo
 	}
 	await writeJsonAtomic(path, { ...current, ...patch });
 }
-
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	const temporaryPath = `${path}.${process.pid}.tmp`;
 	try {
-		await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, {
-			encoding: "utf8",
-			mode: 0o600,
-		});
+		await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 		await rename(temporaryPath, path);
 	} finally {
 		await rm(temporaryPath, { force: true }).catch(() => undefined);

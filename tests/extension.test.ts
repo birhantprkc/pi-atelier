@@ -232,18 +232,16 @@ describe("extension registration", () => {
 
 		await command(h, "sidebar tools on");
 
-		expect(h.saveConfig).toHaveBeenLastCalledWith(
-			expect.stringContaining("pi-atelier.json"),
-			expect.objectContaining({ showSidebarToolNames: true }),
-		);
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: true,
+		});
 		expect(h.overlays[0]?.component.render(44).join("\n")).toContain("read");
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list expanded", "info");
 
 		await command(h, "sidebar tools off");
-		expect(h.saveConfig).toHaveBeenLastCalledWith(
-			expect.stringContaining("pi-atelier.json"),
-			expect.objectContaining({ showSidebarToolNames: false }),
-		);
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: false,
+		});
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list collapsed", "info");
 	});
 

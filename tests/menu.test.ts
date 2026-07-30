@@ -21,12 +21,25 @@ import {
 	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
-import { DEFAULT_CONFIG } from "../src/types.js";
+import { derivePresetIdentity } from "../src/display.js";
+import { DEFAULT_CONFIG, type DisplayPatch } from "../src/types.js";
 
 function harness() {
-	let config = { ...DEFAULT_CONFIG, segments: [...DEFAULT_CONFIG.segments] };
+	let config = {
+		...DEFAULT_CONFIG,
+		segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry })),
+	};
 	const runtime = {
 		getConfig: vi.fn(() => config),
+		getDisplaySettings: vi.fn(() => ({
+			preset: config.preset,
+			density: config.density,
+			segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
+		})),
+		setSessionDisplayPatch: vi.fn((patch: DisplayPatch) => {
+			config = { ...config, ...patch };
+			config.preset = derivePresetIdentity(config);
+		}),
 		setConfig: vi.fn((next) => {
 			config = next;
 		}),
@@ -200,7 +213,9 @@ describe("menu presentation", () => {
 		await openAtelierMenu({} as never, ctx as never, h.runtime as never, "/tmp/user.json", sidebar);
 
 		expect(offered).toContain("○ performance");
-		expect(h.runtime.getConfig().segments).toContain("performance");
+		expect(h.runtime.getConfig().segmentLayout.find((entry) => entry.id === "performance")?.visible).toBe(
+			true,
+		);
 	});
 
 	it("shows and toggles collapsed sidebar tool details", async () => {
@@ -261,6 +276,43 @@ describe("menu presentation", () => {
 });
 
 describe("menu actions", () => {
+	it.each([
+		["editorial", ["activity", "metrics", "context", "model", "git", "statuses", "menu"]],
+		["minimal", ["activity", "metrics", "context", "model", "menu"]],
+		["classic", ["metrics", "context", "model", "git", "statuses"]],
+	] as const)("applies the complete %s template", (preset, visible) => {
+		const h = harness();
+		h.actions.setPreset(preset);
+		expect(h.runtime.getConfig().segmentLayout).toHaveLength(9);
+		expect(
+			h.runtime
+				.getConfig()
+				.segmentLayout.filter((entry) => entry.visible)
+				.map((entry) => entry.id),
+		).toEqual(visible);
+		expect(h.runtime.getConfig().preset).toBe(preset);
+	});
+
+	it("toggles in place, protects required entries, and reorders across hidden neighbors", () => {
+		const h = harness();
+		const initialOrder = h.runtime.getConfig().segmentLayout.map((entry) => entry.id);
+		h.actions.toggleSegment("performance");
+		h.actions.toggleSegment("metrics");
+		expect(h.runtime.getConfig().segmentLayout.map((entry) => entry.id)).toEqual(initialOrder);
+		expect(h.runtime.getConfig().segmentLayout.find((entry) => entry.id === "performance")?.visible).toBe(
+			true,
+		);
+		expect(h.runtime.getConfig().segmentLayout.find((entry) => entry.id === "metrics")?.visible).toBe(true);
+		h.actions.moveSegment("context", "earlier");
+		expect(
+			h.runtime
+				.getConfig()
+				.segmentLayout.map((entry) => entry.id)
+				.slice(2, 5),
+		).toEqual(["metrics", "context", "performance"]);
+		expect(h.runtime.getConfig().preset).toBe("custom");
+	});
+
 	it("keeps the prior model when authentication fails", async () => {
 		const h = harness();
 		h.pi.setModel.mockResolvedValue(false);
@@ -301,8 +353,8 @@ describe("menu actions", () => {
 		h.actions.setPreset("minimal");
 		expect(h.save).not.toHaveBeenCalled();
 		await h.actions.saveDisplayDefaults();
-		expect(h.save).toHaveBeenCalledOnce();
-		expect(h.runtime.setConfig).toHaveBeenCalled();
+		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", h.runtime.getDisplaySettings());
+		expect(h.save).not.toHaveBeenCalled();
 	});
 
 	it("restores the ornament-free Status Rail defaults when selecting editorial", () => {
@@ -313,8 +365,7 @@ describe("menu actions", () => {
 		h.actions.setPreset("editorial");
 		expect(h.runtime.getConfig()).toMatchObject({
 			preset: "editorial",
-			segments: DEFAULT_CONFIG.segments,
-			ornament: "none",
+			segmentLayout: DEFAULT_CONFIG.segmentLayout,
 			density: "comfortable",
 		});
 	});
@@ -327,10 +378,14 @@ describe("menu actions", () => {
 		h.actions.setPreset("classic");
 		expect(h.runtime.getConfig()).toMatchObject({
 			preset: "classic",
-			segments: ["metrics", "context", "model", "git", "statuses"],
 			density: "comfortable",
-			ornament: "none",
 		});
+		expect(
+			h.runtime
+				.getConfig()
+				.segmentLayout.filter((entry) => entry.visible)
+				.map((entry) => entry.id),
+		).toEqual(["metrics", "context", "model", "git", "statuses"]);
 	});
 
 	it("renames a session only after non-empty input", async () => {
@@ -355,9 +410,9 @@ describe("menu actions", () => {
 		h.actions.setDensity("compact");
 		h.actions.setOrnament("none");
 		h.actions.moveSegment("context", "earlier");
-		expect(h.runtime.getConfig()).toMatchObject({ density: "compact", ornament: "none" });
-		expect(h.runtime.getConfig().segments.indexOf("context")).toBeLessThan(
-			h.runtime.getConfig().segments.indexOf("metrics"),
+		expect(h.runtime.getConfig()).toMatchObject({ density: "compact", preset: "custom" });
+		expect(h.runtime.getConfig().segmentLayout.findIndex((entry) => entry.id === "context")).toBeLessThan(
+			h.runtime.getConfig().segmentLayout.findIndex((entry) => entry.id === "performance"),
 		);
 	});
 

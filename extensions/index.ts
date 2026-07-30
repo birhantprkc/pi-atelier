@@ -127,7 +127,7 @@ export default function atelierExtension(
 			targetRuntime.setConfig({ ...targetRuntime.getConfig(), showSidebarToolNames: next });
 		}
 		try {
-			await saveConfig(join(getAgentDir(), "pi-atelier.json"), targetRuntime.getConfig());
+			await saveConfigPatch(join(getAgentDir(), "pi-atelier.json"), { showSidebarToolNames: next });
 			ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
 		} catch (error) {
 			ctx.ui.notify(
@@ -314,6 +314,8 @@ export default function atelierExtension(
 				pi,
 				ctx: initializationContext,
 				config: loaded.config,
+				displayLayers: loaded.displayLayers,
+				displayProvenance: loaded.displayProvenance,
 				autoCompact,
 				requestRender: () => {
 					if (isFresh() && runtime === localRuntime) requestAllRenders();

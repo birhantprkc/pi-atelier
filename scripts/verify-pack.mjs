@@ -11,6 +11,7 @@ const required = [
 	"extensions/index.ts",
 	"src/metrics.ts",
 	"src/config.ts",
+	"src/display.ts",
 	"src/footer.ts",
 	"src/state.ts",
 	"src/menu.ts",
