@@ -97,14 +97,19 @@ Open Pi Atelier with:
 /atelier
 ```
 
-The default shortcut is `alt+a`. The menu contains:
+The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Model** — choose an authenticated model or thinking level
-- **Tools** — search and toggle active Pi tools
-- **Display** — switch presets and save user defaults
-- **Session** — inspect, rename, or compact the current session
-- **Sidebar** — show or hide the docked information rail and expand or collapse tool-name details
-- **Completion notifications** — enable or disable native system notifications on macOS and Windows
+- **Settings** — the Display Settings Workspace, completion notifications, and the persisted sidebar tool-list preference
+- **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
+- **Actions** — session details, rename, and safe compaction
+
+Open the Display Settings Workspace directly with:
+
+```text
+/atelier display
+```
+
+The workspace shows the real Status Rail renderer as a representative preview. Use Up/Down to select, Enter or Space to change a preset, density, or optional Segment, and Shift+Up/Shift+Down to reorder any Segment (including required `metrics` and `context`). `U` performs one-step Undo, `R` reverts Display Session overrides to the Effective lower-layer baseline, `S` saves the current Display as the User default, and Escape closes while retaining active Session overrides. Preset application is one atomic mutation, and Save keeps the workspace open so its result or any failure remains visible.
 
 Additional commands:
 
@@ -171,37 +176,34 @@ Complete example:
 {
   "preset": "editorial",
   "shortcut": "alt+a",
-  "segments": [
-    "brand",
-    "activity",
-    "metrics",
-    "context",
-    "model",
-    "git",
-    "statuses",
-    "menu"
-  ],
   "density": "comfortable",
-  "ornament": "none",
+  "segmentLayout": [
+    { "id": "brand", "visible": false },
+    { "id": "activity", "visible": true },
+    { "id": "metrics", "visible": true },
+    { "id": "performance", "visible": false },
+    { "id": "context", "visible": true },
+    { "id": "model", "visible": true },
+    { "id": "git", "visible": true },
+    { "id": "statuses", "visible": true },
+    { "id": "menu", "visible": true }
+  ],
   "contextWarning": 70,
   "contextDanger": 90,
   "currencyDecimals": 3,
-  "showExtensionStatuses": true,
   "showSessionActions": true,
   "showSidebarToolNames": false,
   "completionNotifications": true
 }
 ```
 
-Unknown or invalid values are ignored with one warning. The required `metrics` and `context` segments are restored if omitted. Add `"performance"` to `segments` to show `TTFT` and `TPS` in the Status Rail; the segment is opt-in and is omitted from all presets by default:
+`segmentLayout` is ordered and every entry has explicit visibility. Pi Atelier preserves the first valid occurrence of each known ID, appends omitted IDs in Product order, and repairs `metrics` and `context` to visible without moving them. Unknown, duplicate, or malformed values produce one de-duplicated warning. Brand and extension Statuses rendering is controlled only by this normalized layout. Performance remains available for TTFT/TPS telemetry but is hidden in all three compatibility templates.
 
-```json
-{
-  "segments": ["activity", "metrics", "performance", "context", "model", "menu"]
-}
-```
+Product defaults are layered with **User default**, trusted **Project override**, then **Session overrides**. The resulting value is the **Effective baseline** shown by the workspace. Pi Atelier tracks the source of density, preset identity, layout order, and each visibility value; untrusted project configuration is not read. Workspace changes are Session-scoped and immediately update the live rail. **Save** atomically patches only `preset`, `density`, and a cloned `segmentLayout` into User configuration while preserving unrelated and unknown keys; it never writes Project configuration. **Revert** clears only Display Session fields, and one-step **Undo** restores the raw Session snapshot, including after Revert. Any density, order, or visibility combination that does not exactly match a complete template has the `custom` preset identity; restoring an exact template restores its named identity.
 
-During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Enabling the segment from **Toggle segments** appends it to the end of the rail; edit `segments` or use **Reorder segments** to place it elsewhere. The editorial preset always suppresses the brand ornament; `restrained` displays `ATELIER` only for non-editorial configurations that include the `brand` segment.
+Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
+
+During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
 
 ## Presets
 

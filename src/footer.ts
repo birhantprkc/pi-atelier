@@ -146,19 +146,19 @@ function buildItems(
 		items.push(compactDensity ? { ...item, full: item.compact } : item);
 	};
 
-	for (const segment of config.segments) {
+	for (const entry of config.segmentLayout) {
+		if (!entry.visible) continue;
+		const segment = entry.id;
 		if (segment === "brand") {
-			if (config.preset !== "editorial" && config.ornament !== "none") {
-				const brand = palette.paint("muted", "ATELIER");
-				add({
-					id: "brand",
-					zone: "left",
-					full: brand,
-					compact: brand,
-					dropRank: DROP.brand,
-					required: false,
-				});
-			}
+			const brand = palette.paint("muted", "ATELIER");
+			add({
+				id: "brand",
+				zone: "left",
+				full: brand,
+				compact: brand,
+				dropRank: DROP.brand,
+				required: false,
+			});
 			continue;
 		}
 
@@ -219,19 +219,17 @@ function buildItems(
 		}
 
 		if (segment === "statuses") {
-			if (config.showExtensionStatuses) {
-				const statuses = state.extensionStatuses.map(sanitize).filter(Boolean).join(" ");
-				if (statuses) {
-					const rendered = palette.paint("muted", statuses);
-					add({
-						id: "status",
-						zone: "left",
-						full: rendered,
-						compact: rendered,
-						dropRank: DROP.status,
-						required: false,
-					});
-				}
+			const statuses = state.extensionStatuses.map(sanitize).filter(Boolean).join(" ");
+			if (statuses) {
+				const rendered = palette.paint("muted", statuses);
+				add({
+					id: "status",
+					zone: "left",
+					full: rendered,
+					compact: rendered,
+					dropRank: DROP.status,
+					required: false,
+				});
 			}
 			continue;
 		}

@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
+import { DISPLAY_TEMPLATES, legacySegmentsToLayout } from "../src/display.js";
 import { createFooterComponent, renderFooterLine, selectResponsiveMode } from "../src/footer.js";
-import { createMenuActions } from "../src/menu.js";
 import { type AtelierConfig, type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
 
 const plainTheme = {
@@ -40,23 +40,17 @@ function firstWidthWithout(text: string, config = DEFAULT_CONFIG, renderState = 
 	throw new Error(`Expected ${text} to be removed`);
 }
 
-const actualClassicPresetConfig = (() => {
-	let config: AtelierConfig = DEFAULT_CONFIG;
-	const actions = createMenuActions(
-		{} as never,
-		{} as never,
-		{
-			getConfig: () => config,
-			setConfig: (next: AtelierConfig) => {
-				config = next;
-			},
-			refreshUsage: () => {},
-		},
-		"unused",
-	);
-	actions.setPreset("classic");
-	return config;
-})();
+const withVisible = (ids: Parameters<typeof legacySegmentsToLayout>[0], overrides = {}) => ({
+	...DEFAULT_CONFIG,
+	...overrides,
+	segmentLayout: legacySegmentsToLayout(ids),
+});
+
+const actualClassicPresetConfig: AtelierConfig = {
+	...DEFAULT_CONFIG,
+	...DISPLAY_TEMPLATES.classic,
+	segmentLayout: DISPLAY_TEMPLATES.classic.segmentLayout.map((entry) => ({ ...entry })),
+};
 
 const state: AtelierState = {
 	activity: "ready",
@@ -102,10 +96,7 @@ const state: AtelierState = {
 
 describe("footer performance", () => {
 	it("renders configured response performance in the Status Rail", () => {
-		const config: AtelierConfig = {
-			...DEFAULT_CONFIG,
-			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
-		};
+		const config = withVisible(["activity", "metrics", "performance", "context", "model", "menu"]);
 		const line = stripAnsi(renderFooterLine(state, config, plainTheme, 160));
 
 		expect(line).toContain("TTFT ~ · TPS ~");
@@ -113,10 +104,7 @@ describe("footer performance", () => {
 	});
 
 	it("renders response performance after a response starts", () => {
-		const config: AtelierConfig = {
-			...DEFAULT_CONFIG,
-			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
-		};
+		const config = withVisible(["activity", "metrics", "performance", "context", "model", "menu"]);
 		const line = stripAnsi(
 			renderFooterLine(
 				{ ...state, performance: { ttftMs: 820, tokensPerSecond: 42.34, estimated: true } },
@@ -130,10 +118,7 @@ describe("footer performance", () => {
 	});
 
 	it("keeps performance labels muted and dims each value until it is measured", () => {
-		const config: AtelierConfig = {
-			...DEFAULT_CONFIG,
-			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
-		};
+		const config = withVisible(["activity", "metrics", "performance", "context", "model", "menu"]);
 		const theme = namedTheme("dark");
 
 		const idle = renderFooterLine(state, config, theme, 400);
@@ -155,10 +140,7 @@ describe("footer performance", () => {
 
 	describe("responsive performance", () => {
 		it("drops performance as one item when the footer is narrow", () => {
-			const config: AtelierConfig = {
-				...DEFAULT_CONFIG,
-				segments: ["activity", "metrics", "performance", "context", "model", "menu"],
-			};
+			const config = withVisible(["activity", "metrics", "performance", "context", "model", "menu"]);
 			const line = stripAnsi(
 				renderFooterLine(
 					{ ...state, performance: { ttftMs: 820, tokensPerSecond: 42.34 } },
@@ -222,7 +204,9 @@ describe("footer", () => {
 		const config: AtelierConfig = {
 			...DEFAULT_CONFIG,
 			preset: "classic",
-			ornament: "restrained",
+			segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) =>
+				entry.id === "brand" ? { ...entry, visible: true } : { ...entry },
+			),
 		};
 		const configuredState = { ...state, extensionStatuses: ["INDEXING"] };
 		expect(plainAt(180, config, configuredState)).toEqual(expect.stringContaining("ATELIER"));
@@ -484,12 +468,37 @@ describe("footer", () => {
 		expect(line).not.toContain("ATELIER");
 	});
 
-	it("honors ornament, preset, density, and configured item order", () => {
+	it("uses normalized layout as the sole Brand and Statuses visibility source", () => {
+		const visible = withVisible(["brand", "activity", "metrics", "context", "statuses"], {
+			preset: "editorial",
+			showExtensionStatuses: false,
+		}) as AtelierConfig;
+		const line = renderFooterLine({ ...state, extensionStatuses: ["INDEXING"] }, visible, plainTheme, 180);
+		expect(line).toContain("ATELIER");
+		expect(line).toContain("INDEXING");
+
+		const hidden = withVisible(["activity", "metrics", "context"], {
+			preset: "classic",
+			showExtensionStatuses: true,
+		}) as AtelierConfig;
+		const hiddenLine = renderFooterLine(
+			{ ...state, extensionStatuses: ["INDEXING"] },
+			hidden,
+			plainTheme,
+			180,
+		);
+		expect(hiddenLine).not.toContain("ATELIER");
+		expect(hiddenLine).not.toContain("INDEXING");
+	});
+
+	it("honors preset, density, and configured item order", () => {
 		const defaultLine = renderFooterLine(state, DEFAULT_CONFIG, plainTheme, 180);
 		expect(defaultLine).not.toContain("ATELIER");
 		const ornament = renderFooterLine(
 			state,
-			{ ...DEFAULT_CONFIG, preset: "classic", ornament: "restrained" },
+			withVisible(["brand", "activity", "metrics", "context", "model", "git", "statuses", "menu"], {
+				preset: "classic",
+			}),
 			plainTheme,
 			180,
 		);
@@ -506,21 +515,12 @@ describe("footer", () => {
 		expect(compact).toContain("● WORKING");
 		expect(compact).not.toContain("PONDERING");
 
-		const reordered = renderFooterLine(
-			state,
-			{ ...DEFAULT_CONFIG, segments: ["context", "metrics"] },
-			plainTheme,
-			160,
-		);
+		const reordered = renderFooterLine(state, withVisible(["context", "metrics"]), plainTheme, 160);
 		expect(reordered.indexOf("ctx 27.0%")).toBeLessThan(reordered.indexOf("in 324k"));
-		const contextOnly = renderFooterLine(
-			state,
-			{ ...DEFAULT_CONFIG, segments: ["context"] },
-			plainTheme,
-			160,
-		);
+		const contextOnly = renderFooterLine(state, withVisible(["context"]), plainTheme, 160);
 		expect(contextOnly).toContain("ctx 27.0%");
-		expect(contextOnly).not.toContain("in 324k");
+		// Required metrics remains visible even when omitted by a legacy-style fixture.
+		expect(contextOnly).toContain("in 324k");
 		expect(contextOnly).not.toContain("● READY");
 	});
 
@@ -612,7 +612,16 @@ describe("footer", () => {
 	it("generates each item at most once for duplicate configured categories", () => {
 		const line = renderFooterLine(
 			state,
-			{ ...DEFAULT_CONFIG, segments: ["activity", "metrics", "metrics", "context", "context"] },
+			{
+				...DEFAULT_CONFIG,
+				segmentLayout: [
+					{ id: "activity", visible: true },
+					{ id: "metrics", visible: true },
+					{ id: "metrics", visible: true },
+					{ id: "context", visible: true },
+					{ id: "context", visible: true },
+				],
+			},
 			plainTheme,
 			180,
 		);
@@ -681,7 +690,12 @@ describe("footer", () => {
 		try {
 			expect(component.render(20)[0]).not.toContain("PONDERING");
 			expect(vi.getTimerCount()).toBe(0);
-			config = { ...DEFAULT_CONFIG, segments: DEFAULT_CONFIG.segments.filter((id) => id !== "activity") };
+			config = {
+				...DEFAULT_CONFIG,
+				segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) =>
+					entry.id === "activity" ? { ...entry, visible: false } : { ...entry },
+				),
+			};
 			expect(component.render(100)[0]).not.toContain("PONDERING");
 			expect(vi.getTimerCount()).toBe(0);
 			config = DEFAULT_CONFIG;
@@ -712,7 +726,9 @@ describe("footer", () => {
 			}),
 			getConfig: () => ({
 				...DEFAULT_CONFIG,
-				segments: DEFAULT_CONFIG.segments.filter((id) => id !== "activity"),
+				segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) =>
+					entry.id === "activity" ? { ...entry, visible: false } : { ...entry },
+				),
 			}),
 			requestRender: vi.fn(),
 			onBranchChange: () => vi.fn(),

@@ -183,6 +183,17 @@ describe("extension registration", () => {
 		expect(h.shortcuts).toContain("ctrl+shift+r");
 	});
 
+	it("routes alt+a to the Control Center", async () => {
+		const h = harness();
+		await start(h);
+		const before = h.custom.mock.calls.length;
+
+		await h.shortcutHandlers.get("alt+a")?.(h.ctx);
+
+		expect(h.custom.mock.calls.length).toBe(before + 1);
+		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("Atelier Control Center");
+	});
+
 	it("registers the resize shortcut exactly once across session replacement", async () => {
 		const h = harness();
 		await start(h);
@@ -232,18 +243,16 @@ describe("extension registration", () => {
 
 		await command(h, "sidebar tools on");
 
-		expect(h.saveConfig).toHaveBeenLastCalledWith(
-			expect.stringContaining("pi-atelier.json"),
-			expect.objectContaining({ showSidebarToolNames: true }),
-		);
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: true,
+		});
 		expect(h.overlays[0]?.component.render(44).join("\n")).toContain("read");
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list expanded", "info");
 
 		await command(h, "sidebar tools off");
-		expect(h.saveConfig).toHaveBeenLastCalledWith(
-			expect.stringContaining("pi-atelier.json"),
-			expect.objectContaining({ showSidebarToolNames: false }),
-		);
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: false,
+		});
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list collapsed", "info");
 	});
 
@@ -408,6 +417,20 @@ describe("extension registration", () => {
 		} finally {
 			vi.unstubAllEnvs();
 		}
+	});
+
+	it("opens the Display workspace directly and rejects it outside TUI mode", async () => {
+		const h = harness();
+		await start(h);
+		const before = h.custom.mock.calls.length;
+		await command(h, "display");
+		expect(h.custom.mock.calls.length).toBe(before + 1);
+		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("DISPLAY SETTINGS");
+
+		const printed = harness("print");
+		await command(printed, "display");
+		expect(printed.custom).not.toHaveBeenCalled();
+		expect(printed.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("TUI mode"), "warning");
 	});
 
 	it("warns instead of opening the sidebar outside TUI mode", async () => {
@@ -585,27 +608,10 @@ describe("extension registration", () => {
 		try {
 			const h = harness();
 			await start(h);
-			const selections = ["display", "close"];
-			h.ctx.ui.select = vi.fn((title: string) =>
-				Promise.resolve(title === "Display controls" ? "Toggle segments" : "○ performance"),
-			);
-			h.ctx.ui.custom = vi.fn((factory: (...args: any[]) => any) => {
-				return new Promise<string | undefined>((resolve) => {
-					const done = vi.fn((value: string | undefined) => resolve(value));
-					factory(
-						{ requestRender: vi.fn() },
-						{
-							fg: (_color: string, text: string) => text,
-							bold: (text: string) => text,
-							italic: (text: string) => text,
-						},
-						{},
-						done,
-					);
-					done(selections.shift());
-				});
-			});
-			await command(h, "");
+			await command(h, "display");
+			const workspace = h.overlays.at(-1)?.component;
+			for (let index = 0; index < 5; index += 1) workspace.handleInput("\u001b[B");
+			workspace.handleInput(" ");
 
 			const footerRequestRender = vi.fn();
 			const footer = h.setFooter.mock.calls[0]?.[0](

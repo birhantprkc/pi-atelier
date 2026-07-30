@@ -202,6 +202,75 @@ describe("AtelierRuntime", () => {
 		expect(requestRender).toHaveBeenCalledTimes(2);
 	});
 
+	it("recomputes Session Display patches from retained lower layers with provenance", () => {
+		const requestRender = vi.fn();
+		const runtime = new AtelierRuntime({
+			pi: { exec: vi.fn() } as never,
+			ctx: {
+				modelRegistry: { isUsingOAuth: vi.fn() },
+				getContextUsage: vi.fn(),
+				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
+			} as never,
+			config: DEFAULT_CONFIG,
+			displayLayers: { user: { density: "compact" } },
+			autoCompact: null,
+			requestRender,
+		});
+		requestRender.mockClear();
+
+		runtime.setSessionDisplayPatch({
+			segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) =>
+				entry.id === "performance" ? { ...entry, visible: true } : { ...entry },
+			),
+		});
+
+		expect(runtime.getDisplaySettings()).toMatchObject({ preset: "custom", density: "compact" });
+		expect(runtime.getDisplaySettings().segmentLayout[3]).toEqual({ id: "performance", visible: true });
+		expect(runtime.getDisplayProvenance()).toMatchObject({ density: "user", order: "session" });
+		expect(runtime.getDisplayProvenance().visibility.performance).toBe("session");
+		expect(requestRender).toHaveBeenCalledOnce();
+
+		runtime.setSessionDisplayPatch(undefined);
+		expect(runtime.getDisplaySettings()).toMatchObject({ density: "compact" });
+		expect(runtime.getDisplaySettings().segmentLayout[3]).toEqual({ id: "performance", visible: false });
+		expect(runtime.getDisplayProvenance()).toMatchObject({ density: "user", order: "product" });
+		expect(requestRender).toHaveBeenCalledTimes(2);
+	});
+
+	it("snapshots and replaces raw Session Display overrides without aliasing", () => {
+		const { runtime } = createRuntime();
+		runtime.replaceSessionDisplayOverride({
+			density: "compact",
+			segmentLayout: DEFAULT_CONFIG.segmentLayout,
+		});
+		const snapshot = runtime.getSessionDisplayOverride();
+		expect(snapshot).toMatchObject({ density: "compact" });
+		if (snapshot?.segmentLayout) snapshot.segmentLayout[0]!.visible = true;
+		expect(runtime.getSessionDisplayOverride()?.segmentLayout?.[0]?.visible).toBe(false);
+		runtime.clearSessionDisplayOverride();
+		expect(runtime.getSessionDisplayOverride()).toBeUndefined();
+	});
+
+	it("recomputes trusted Project precedence after a successful User Display save", () => {
+		const requestRender = vi.fn();
+		const runtime = new AtelierRuntime({
+			pi: { exec: vi.fn() } as never,
+			ctx: {
+				modelRegistry: { isUsingOAuth: vi.fn() },
+				getContextUsage: vi.fn(),
+				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
+			} as never,
+			config: DEFAULT_CONFIG,
+			displayLayers: { project: { density: "comfortable" } },
+			autoCompact: null,
+			requestRender,
+		});
+		runtime.applySavedUserDisplayPatch({ density: "compact" });
+		expect(runtime.getDisplaySettings().density).toBe("comfortable");
+		expect(runtime.getDisplayProvenance().density).toBe("project");
+		expect(runtime.getSessionDisplayOverride()).toBeUndefined();
+	});
+
 	it("selects again for the next work cycle and still updates configuration", () => {
 		const random = vi.fn().mockReturnValueOnce(0).mockReturnValueOnce(0.999_999);
 		const { runtime, requestRender } = createRuntime(undefined, random);
