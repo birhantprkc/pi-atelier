@@ -57,15 +57,15 @@ function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Pla
 		getActiveTools: vi.fn().mockReturnValue(["read"]),
 		getAllTools: vi.fn().mockReturnValue([{ name: "read" }]),
 	};
-	const custom = vi.fn((factory: (...args: any[]) => any, options: any) => {
+	const custom = vi.fn((factory: (...args: any[]) => any, options: any): Promise<any> => {
 		const requestRender = vi.fn();
 		const tui = {
 			render: baseRender,
 			terminal: { columns: 120, rows: 36, width: 120, write: terminalWrite },
 			requestRender,
 		};
-		let resolve!: (value: undefined) => void;
-		const pending = new Promise<undefined>((done) => {
+		let resolve!: (value: any) => void;
+		const pending = new Promise<any>((done) => {
 			resolve = done;
 		});
 		const done = vi.fn(() => resolve(undefined));
@@ -107,6 +107,7 @@ function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Pla
 			setFooter,
 			notify: vi.fn(),
 			theme: {},
+			select: vi.fn(),
 			custom,
 			onTerminalInput: vi.fn((handler) => {
 				terminalInput = handler;
@@ -576,6 +577,93 @@ describe("extension registration", () => {
 		expect(footerText).toContain("●");
 		expect(footerText).not.toContain("bash");
 		expect(footerText).not.toContain("npm test");
+	});
+
+	it("renders live response performance in the configured footer", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(1_000);
+		try {
+			const h = harness();
+			await start(h);
+			const selections = ["display", "close"];
+			h.ctx.ui.select = vi.fn((title: string) =>
+				Promise.resolve(title === "Display controls" ? "Toggle segments" : "○ performance"),
+			);
+			h.ctx.ui.custom = vi.fn((factory: (...args: any[]) => any) => {
+				return new Promise<string | undefined>((resolve) => {
+					const done = vi.fn((value: string | undefined) => resolve(value));
+					factory(
+						{ requestRender: vi.fn() },
+						{
+							fg: (_color: string, text: string) => text,
+							bold: (text: string) => text,
+							italic: (text: string) => text,
+						},
+						{},
+						done,
+					);
+					done(selections.shift());
+				});
+			});
+			await command(h, "");
+
+			const footerRequestRender = vi.fn();
+			const footer = h.setFooter.mock.calls[0]?.[0](
+				{ requestRender: footerRequestRender },
+				{
+					fg: (_color: string, text: string) => text,
+					bold: (text: string) => text,
+					italic: (text: string) => text,
+				},
+				{
+					getGitBranch: () => undefined,
+					getExtensionStatuses: () => new Map(),
+					onBranchChange: () => () => undefined,
+				},
+			);
+			expect(footer.render(160).join("\n")).toContain("TTFT ~ · TPS ~");
+
+			vi.setSystemTime(1_100);
+			await h.handlers.get("before_provider_request")?.(
+				{ type: "before_provider_request", payload: {} },
+				h.ctx,
+			);
+			vi.setSystemTime(1_920);
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "thinking", thinking: "token" }] },
+					assistantMessageEvent: { type: "thinking_delta", delta: "token" },
+				},
+				h.ctx,
+			);
+
+			expect(footerRequestRender).toHaveBeenCalled();
+			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~");
+
+			vi.setSystemTime(2_920);
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "text", text: "x".repeat(80) }] },
+					assistantMessageEvent: { type: "text_delta", delta: "more output" },
+				},
+				h.ctx,
+			);
+			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~20.0");
+
+			vi.setSystemTime(4_420);
+			await h.handlers.get("message_end")?.(
+				{
+					type: "message_end",
+					message: { role: "assistant", usage: { output: 120 } },
+				},
+				h.ctx,
+			);
+			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS 48.0");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("measures TTFT from provider dispatch and final TPS from streamed generation", async () => {

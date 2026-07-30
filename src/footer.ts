@@ -1,7 +1,8 @@
 import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
-import type { AtelierConfig, AtelierMetrics, AtelierState } from "./types.js";
+import { responsePerformanceValues } from "./run-activity.js";
+import type { AtelierConfig, AtelierMetrics, AtelierState, DisplayValue, FooterState } from "./types.js";
 
 export interface ThemeLike {
 	readonly name?: string;
@@ -25,6 +26,7 @@ type FooterItemId =
 	| "git"
 	| "input"
 	| "output"
+	| "performance"
 	| "cache"
 	| "cost"
 	| "context"
@@ -48,6 +50,7 @@ const DROP = {
 	model: 30,
 	input: 40,
 	output: 40,
+	performance: 45,
 	cache: 50,
 	menu: 60,
 	activity: Number.POSITIVE_INFINITY,
@@ -66,11 +69,6 @@ export function selectResponsiveMode(width: number): ResponsiveMode {
 	if (width >= 72) return "focus";
 	if (width >= 56) return "telemetry";
 	return "safe";
-}
-
-interface DisplayValue {
-	text: string;
-	available: boolean;
 }
 
 function paintValue(value: DisplayValue, role: PaletteRole, palette: AtelierPalette): string {
@@ -132,7 +130,7 @@ function activityText(
 }
 
 function buildItems(
-	state: AtelierState,
+	state: FooterState,
 	config: AtelierConfig,
 	theme: ThemeLike,
 	colorEnabled: boolean,
@@ -289,6 +287,23 @@ function buildItems(
 			continue;
 		}
 
+		if (segment === "performance") {
+			const values = responsePerformanceValues(state.performance);
+			const rendered = [
+				metric("TTFT", values.ttft, palette, "output"),
+				metric("TPS", values.tps, palette, "output"),
+			].join(palette.paint("muted", " · "));
+			add({
+				id: "performance",
+				zone: "right",
+				full: rendered,
+				compact: rendered,
+				dropRank: DROP.performance,
+				required: false,
+			});
+			continue;
+		}
+
 		if (segment === "context") {
 			const metrics = state.metrics;
 			const role = contextRole(metrics, config);
@@ -371,7 +386,7 @@ function compose(items: FooterItem[], width: number): string {
 }
 
 export function renderFooterLine(
-	state: AtelierState,
+	state: FooterState,
 	config: AtelierConfig,
 	theme: ThemeLike,
 	width: number,
@@ -384,7 +399,7 @@ export function renderFooterLine(
 }
 
 export interface FooterComponentOptions {
-	getState(): AtelierState;
+	getState(): FooterState;
 	getConfig(): AtelierConfig;
 	colorEnabled?: boolean;
 	requestRender(): void;

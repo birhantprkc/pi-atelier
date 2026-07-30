@@ -2,9 +2,29 @@ import type { WorkspacePulseData } from "./workspace-pulse.js";
 
 export type PresetName = "editorial" | "minimal" | "classic";
 export type ActivityState = "ready" | "working" | "warning" | "error";
-export type SegmentId = "brand" | "activity" | "metrics" | "context" | "model" | "git" | "statuses" | "menu";
+export type SegmentId =
+	| "brand"
+	| "activity"
+	| "metrics"
+	| "performance"
+	| "context"
+	| "model"
+	| "git"
+	| "statuses"
+	| "menu";
 export type Density = "comfortable" | "compact";
 export type Ornament = "none" | "restrained";
+
+export interface ResponsePerformance {
+	ttftMs: number;
+	tokensPerSecond?: number;
+	estimated?: true;
+}
+
+export interface DisplayValue {
+	text: string;
+	available: boolean;
+}
 
 export interface AtelierConfig {
 	preset: PresetName;
@@ -53,6 +73,11 @@ export interface AtelierState {
 	workspacePulse: WorkspacePulseState;
 	metrics: AtelierMetrics;
 	extensionStatuses: readonly string[];
+}
+
+/** Footer render input: runtime state plus the live response metrics the runtime does not own. */
+export interface FooterState extends AtelierState {
+	performance?: ResponsePerformance;
 }
 
 export const DEFAULT_CONFIG: AtelierConfig = {

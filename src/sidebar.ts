@@ -8,6 +8,7 @@ import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.
 import {
 	EMPTY_RUN_ACTIVITY,
 	formatDuration,
+	formatResponsePerformance,
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
@@ -636,19 +637,8 @@ function runSummaryRow(activity: RunActivitySnapshot, palette: AtelierPalette, n
 	return palette.paint(role, `${label} · ${activity.phase} ${duration}`);
 }
 
-function formatTtft(ttftMs: number): string {
-	const safe = Math.max(0, Number.isFinite(ttftMs) ? ttftMs : 0);
-	return safe < 1_000 ? `${Math.round(safe)}ms` : `${(safe / 1_000).toFixed(1)}s`;
-}
-
 function responsePerformanceRow(activity: RunActivitySnapshot, palette: AtelierPalette): string {
-	const performance = activity.performance;
-	const ttft = performance && Number.isFinite(performance.ttftMs) ? formatTtft(performance.ttftMs) : "~";
-	const tps =
-		performance?.tokensPerSecond !== undefined && Number.isFinite(performance.tokensPerSecond)
-			? `${performance.estimated ? "~" : ""}${Math.max(0, performance.tokensPerSecond).toFixed(1)}`
-			: "~";
-	return palette.paint("output", `TTFT ${ttft} · TPS ${tps}`);
+	return palette.paint("output", formatResponsePerformance(activity.performance));
 }
 
 function activityRows(

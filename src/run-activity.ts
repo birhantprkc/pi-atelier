@@ -1,5 +1,6 @@
 import nodePath from "node:path";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import type { DisplayValue, ResponsePerformance } from "./types.js";
 
 export type ToolActivityStatus = "running" | "done" | "failed";
 
@@ -10,12 +11,6 @@ export interface ToolActivity {
 	status: ToolActivityStatus;
 	startedAt: number;
 	durationMs?: number;
-}
-
-export interface ResponsePerformance {
-	ttftMs: number;
-	tokensPerSecond?: number;
-	estimated?: true;
 }
 
 export interface RunActivitySnapshot {
@@ -75,6 +70,35 @@ export const EMPTY_RUN_ACTIVITY: RunActivitySnapshot = Object.freeze({
 	completedCount: 0,
 	failedCount: 0,
 });
+
+export function responsePerformanceValues(performance?: ResponsePerformance): {
+	ttft: DisplayValue;
+	tps: DisplayValue;
+} {
+	const ttftMs = performance?.ttftMs;
+	const tokensPerSecond = performance?.tokensPerSecond;
+	const ttftAvailable = ttftMs !== undefined && Number.isFinite(ttftMs);
+	const tpsAvailable = tokensPerSecond !== undefined && Number.isFinite(tokensPerSecond);
+	return {
+		ttft: { text: ttftAvailable ? formatTtft(ttftMs) : "~", available: ttftAvailable },
+		tps: {
+			text: tpsAvailable
+				? `${performance?.estimated ? "~" : ""}${Math.max(0, tokensPerSecond).toFixed(1)}`
+				: "~",
+			available: tpsAvailable,
+		},
+	};
+}
+
+export function formatResponsePerformance(performance?: ResponsePerformance): string {
+	const { ttft, tps } = responsePerformanceValues(performance);
+	return `TTFT ${ttft.text} · TPS ${tps.text}`;
+}
+
+function formatTtft(ttftMs: number): string {
+	const safe = Math.max(0, ttftMs);
+	return safe < 1_000 ? `${Math.round(safe)}ms` : `${(safe / 1_000).toFixed(1)}s`;
+}
 
 export function createRunActivityTracker(options: RunActivityTrackerOptions): RunActivityTracker {
 	return new DefaultRunActivityTracker(options);
