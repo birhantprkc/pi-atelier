@@ -270,18 +270,21 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			const presetRow: Row = { kind: "preset", id: "preset" };
 			const densityRow: Row = { kind: "density", id: "density" };
 			const actionRow = (id: Extract<Row, { kind: "action" }>["id"]): Row => ({ kind: "action", id });
+			const actionLine = (id: Extract<Row, { kind: "action" }>["id"], label: string, hint: string) =>
+				`${marker(actionRow(id))} ${label.padEnd(16)}${hint}`;
 			const sessionChanged = options.getSessionDisplayOverride() !== undefined;
 			const status = saving ? "saving…" : sessionChanged ? "session changed" : "effective";
 			const displayLines = [
 				`${marker(presetRow)} Preset       ${display.preset.padEnd(13)} ${provenance.preset}`,
 				`${marker(densityRow)} Density      ${display.density.padEnd(13)} ${provenance.density}`,
 				"",
-				`${marker(actionRow("save"))} Save default ${saving ? "saving…" : "S"}`,
-				`${marker(actionRow("revert"))} Revert      R`,
-				`${marker(actionRow("undo"))} Undo        ${hasUndo ? "U" : "—"}`,
+				actionLine("save", "Save default", saving ? "saving…" : "S"),
+				actionLine("revert", "Revert session", "R"),
+				actionLine("undo", "Undo", hasUndo ? "U" : "—"),
 			];
 			const segmentLines = [
-				options.theme.fg("muted", `  ● shown · ○ hidden · ◆ required · order:${provenance.order}`),
+				options.theme.fg("muted", `  ● shown   ○ hidden   ◆ required   order ${provenance.order}`),
+				"",
 				...display.segmentLayout.map((entry, index) => {
 					const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(entry.id);
 					const state = required ? "◆" : entry.visible ? "●" : "○";
@@ -349,7 +352,8 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				...preview,
 				"",
 				...editing,
-				...(feedback ? ["", fit(feedback, outerInner)] : []),
+				"",
+				...(feedback ? [fit(feedback, outerInner)] : []),
 				fit(guidance, outerInner),
 			];
 			const border = (text: string) => options.theme.fg("borderAccent", text);

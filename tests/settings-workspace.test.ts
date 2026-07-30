@@ -147,7 +147,7 @@ describe("Display Settings Workspace", () => {
 		});
 		const rendered = text(h.component);
 		expect(rendered).toContain("Density      compact       user");
-		expect(rendered).toContain("order:user");
+		expect(rendered).toContain("order user");
 		expect(rendered).not.toContain("brand › activity");
 		expect(rendered.indexOf("1  ○ brand")).toBeLessThan(rendered.indexOf("2  ● activity"));
 		expect(rendered.indexOf("2  ● activity")).toBeLessThan(rendered.indexOf("3  ◆ metrics"));
@@ -168,7 +168,7 @@ describe("Display Settings Workspace", () => {
 		expect(lines.join("\n")).not.toContain("brand        ATELIER");
 	});
 
-	it("keeps value and provenance columns fixed while focus moves", () => {
+	it("keeps value, provenance, and action shortcut columns fixed", () => {
 		const h = harness();
 		const before = h.component.render(120);
 		h.component.handleInput("\u001b[B");
@@ -183,6 +183,11 @@ describe("Display Settings Workspace", () => {
 			);
 			expect(beforeLine?.indexOf("product")).toBe(afterLine?.indexOf("product"));
 		}
+		const save = before.find((line) => line.includes("Save default"));
+		const revert = before.find((line) => line.includes("Revert session"));
+		const undo = before.find((line) => line.includes("Undo"));
+		expect(save?.lastIndexOf("S")).toBe(revert?.lastIndexOf("R"));
+		expect(revert?.lastIndexOf("R")).toBe(undo?.lastIndexOf("—"));
 	});
 
 	it("uses stacked panels narrowly and equal-bottom side-by-side panels widely", () => {
