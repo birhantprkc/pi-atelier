@@ -14,14 +14,15 @@ vi.mock("@earendil-works/pi-tui", async (importOriginal) => {
 	};
 });
 
+import { derivePresetIdentity } from "../src/display.js";
 import {
 	createMenuActions,
+	openAtelierControlCenter,
 	openAtelierMenu,
 	renderMenuBorder,
 	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
-import { derivePresetIdentity } from "../src/display.js";
 import { DEFAULT_CONFIG, type DisplayPatch } from "../src/types.js";
 
 function harness() {
@@ -82,11 +83,15 @@ describe("Control Center presentation", () => {
 			compact: vi.fn(),
 			ui: {
 				notify: vi.fn(),
-				custom: vi.fn((factory: (...args: any[]) => unknown) => {
+				custom: vi.fn((factory: (...args: any[]) => unknown, _options?: unknown) => {
 					const value = values.shift();
 					factory(
 						{ requestRender: vi.fn() },
-						{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+						{
+							fg: (_color: string, text: string) => text,
+							bold: (text: string) => text,
+							italic: (text: string) => text,
+						},
 						{},
 						vi.fn(),
 					);
@@ -113,6 +118,53 @@ describe("Control Center presentation", () => {
 		);
 		expect(rootMenuItems[0]?.map((item) => item.label)).toEqual(["Settings", "Controls", "Actions", "Close"]);
 		expect(rootMenuItems[0]?.find((item) => item.value === "controls")?.description).toContain("Sidebar: On");
+	});
+
+	it.each([
+		[
+			"settings",
+			["Display: editorial", "Completion notifications: On", "Sidebar tool list: Collapsed", "Back"],
+		],
+		["actions", ["Session details", "Rename session", "Compact session", "Back"]],
+	] as const)("routes the %s root category to its destination", async (category, expectedLabels) => {
+		rootMenuItems.length = 0;
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+		};
+		await openAtelierMenu(
+			{} as never,
+			contextWithSelections([category, "back", "close"]) as never,
+			harness().runtime as never,
+			"/tmp/user.json",
+			sidebar,
+		);
+		expect(rootMenuItems[1]?.map((item) => item.label)).toEqual(expectedLabels);
+	});
+
+	it("routes Control Center Settings → Display to the workspace", async () => {
+		rootMenuItems.length = 0;
+		const ctx = contextWithSelections(["settings", "display", "workspace-close", "back", "close"]);
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+		};
+		await openAtelierControlCenter(
+			{} as never,
+			ctx as never,
+			harness().runtime as never,
+			"/tmp/user.json",
+			sidebar,
+		);
+		expect(ctx.ui.custom).toHaveBeenCalledTimes(5);
+		expect(ctx.ui.custom.mock.calls[2]?.[1]).toMatchObject({
+			overlay: true,
+			overlayOptions: expect.objectContaining({ width: "90%" }),
+		});
 	});
 
 	it("keeps Sidebar visibility in Controls and session-scoped", async () => {

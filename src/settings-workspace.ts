@@ -136,6 +136,8 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 		{ kind: "action", id: "save" },
 		{ kind: "action", id: "close" },
 	];
+	const rowIndex = (target: Row, allRows = rows()): number =>
+		allRows.findIndex((row) => row.kind === target.kind && row.id === target.id);
 	const request = (live = false): void => {
 		options.requestWorkspaceRender();
 		if (live) options.requestLiveRender();
@@ -240,7 +242,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			{ ...cloneDisplay(display), segmentLayout: reorderSegment(display.segmentLayout, row.id, direction) },
 			`Moved ${row.id} ${direction}`,
 		);
-		focus = 2 + target;
+		focus = rowIndex(row);
 	};
 
 	return {
@@ -265,38 +267,41 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			const outerInner = Math.max(0, width - 2);
 			const provenance = options.getDisplayProvenance();
 			const allRows = rows();
-			const marker = (index: number) => (focus === index ? options.theme.fg("accent", "›") : " ");
+			const marker = (row: Row) => (focus === rowIndex(row, allRows) ? options.theme.fg("accent", "›") : " ");
+			const presetRow: Row = { kind: "preset", id: "preset" };
+			const densityRow: Row = { kind: "density", id: "density" };
+			const actionRow = (id: Extract<Row, { kind: "action" }>["id"]): Row => ({ kind: "action", id });
 			const displayLines = [
-				`${marker(0)} Preset     ${display.preset.padEnd(12)} ${provenance.preset}`,
-				`${marker(1)} Density    ${display.density.padEnd(12)} ${provenance.density}`,
+				`${marker(presetRow)} Preset     ${display.preset.padEnd(12)} ${provenance.preset}`,
+				`${marker(densityRow)} Density    ${display.density.padEnd(12)} ${provenance.density}`,
+				`  Order      ${provenance.order.padEnd(12)} ${display.segmentLayout.map((entry) => entry.id).join(" › ")}`,
 				"",
-				`${marker(11)} Undo       ${hasUndo ? "available" : "—"}`,
-				`${marker(12)} Revert     Effective baseline`,
-				`${marker(13)} Save       ${saving ? "saving…" : "User default"}`,
-				`${marker(14)} Close      keep Session changes`,
+				`${marker(actionRow("undo"))} Undo       ${hasUndo ? "available" : "—"}`,
+				`${marker(actionRow("revert"))} Revert     Effective baseline`,
+				`${marker(actionRow("save"))} Save       ${saving ? "saving…" : "User default"}`,
+				`${marker(actionRow("close"))} Close      keep Session changes`,
 			];
-			const segmentLines = display.segmentLayout.map((entry, index) => {
+			const segmentLines = display.segmentLayout.map((entry) => {
 				const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(entry.id);
 				const status = required ? "required" : entry.visible ? "shown" : "hidden";
-				return `${marker(index + 2)} ${entry.id.padEnd(12)} ${status.padEnd(8)} ${provenance.visibility[entry.id]}`;
+				return `${marker({ kind: "segment", id: entry.id })} ${entry.id.padEnd(12)} ${status.padEnd(8)} ${provenance.visibility[entry.id]}`;
 			});
 			const previewConfig = { ...options.getRenderConfig(), ...cloneDisplay(display) };
-			const previewWidth = Math.max(1, outerInner - 4);
-			const preview = panel(
-				"Representative Status Rail",
-				[
-					renderFooterLine(
-						options.getPreviewState?.() ?? representativeState,
-						previewConfig,
-						options.theme,
-						previewWidth,
-						options.colorEnabled ?? true,
-					),
-				],
-				outerInner,
-				options.theme,
-				true,
-			);
+			const previewState = options.getPreviewState?.() ?? representativeState;
+			const previewLineWidth = Math.max(1, outerInner - 16);
+			const previewLines = display.segmentLayout
+				.filter((entry) => entry.visible)
+				.map(
+					(entry) =>
+						`${entry.id.padEnd(12)} ${renderFooterLine(
+							previewState,
+							{ ...previewConfig, segmentLayout: [{ ...entry }] },
+							options.theme,
+							previewLineWidth,
+							options.colorEnabled ?? true,
+						)}`,
+				);
+			const preview = panel("Representative Status Rail", previewLines, outerInner, options.theme, true);
 			let editing: string[];
 			if (outerInner >= 76) {
 				const leftWidth = Math.floor((outerInner - 1) * 0.45);

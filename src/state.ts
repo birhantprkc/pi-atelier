@@ -20,6 +20,14 @@ import {
 } from "./workspace-pulse.js";
 
 const WORKSPACE_REFRESH_DEBOUNCE_MS = 250;
+const SESSION_DISPLAY_OVERRIDE_KEYS = [
+	"preset",
+	"density",
+	"segmentLayout",
+	"segments",
+	"ornament",
+	"showExtensionStatuses",
+] as const;
 
 export interface RuntimeDependencies {
 	pi: ExtensionAPI;
@@ -101,14 +109,7 @@ export class AtelierRuntime {
 		const session = this.#displayLayers.session;
 		if (!session) return undefined;
 		const result: SessionDisplayOverride = {};
-		for (const key of [
-			"preset",
-			"density",
-			"segmentLayout",
-			"segments",
-			"ornament",
-			"showExtensionStatuses",
-		] as const) {
+		for (const key of SESSION_DISPLAY_OVERRIDE_KEYS) {
 			if (!(key in session)) continue;
 			const value = session[key];
 			(result as Record<string, unknown>)[key] =
@@ -123,15 +124,7 @@ export class AtelierRuntime {
 
 	replaceSessionDisplayOverride(override: SessionDisplayOverride | undefined): void {
 		const session = { ...this.#displayLayers.session };
-		for (const key of [
-			"preset",
-			"density",
-			"segmentLayout",
-			"segments",
-			"ornament",
-			"showExtensionStatuses",
-		] as const)
-			delete session[key];
+		for (const key of SESSION_DISPLAY_OVERRIDE_KEYS) delete session[key];
 		if (override) Object.assign(session, structuredClone(override));
 		const { session: _oldSession, ...lower } = this.#displayLayers;
 		this.#displayLayers = Object.keys(session).length > 0 ? { ...lower, session } : lower;

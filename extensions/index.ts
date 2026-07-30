@@ -1,17 +1,17 @@
 import { basename, join } from "node:path";
 import {
 	CONFIG_DIR_NAME,
-	estimateTokens,
 	type ExtensionAPI,
 	type ExtensionContext,
+	estimateTokens,
 	getAgentDir,
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import type { KeyId } from "@earendil-works/pi-tui";
 import {
-	createCompletionNotifier,
 	type CompletionNotification,
 	type CompletionNotifier,
+	createCompletionNotifier,
 	type SpawnNotificationProcess,
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
@@ -60,6 +60,12 @@ export default function atelierExtension(
 		requestRender();
 		sidebar?.requestRender();
 	};
+	const lifecycleGuardedSavePatch =
+		(targetRuntime: AtelierRuntime): typeof saveUserConfigPatch =>
+		async (path, patch) => {
+			if (runtime !== targetRuntime) throw new Error("Pi Atelier is not active in this session");
+			await saveConfigPatch(path, patch);
+		};
 
 	function updateExtensionStatuses(next: readonly string[]): void {
 		if (
@@ -162,10 +168,6 @@ export default function atelierExtension(
 		}
 		const targetRuntime = current.runtime;
 		const targetSidebar = current.sidebar;
-		const guardedSavePatch: typeof saveUserConfigPatch = async (path, patch) => {
-			if (runtime !== targetRuntime) throw new Error("Pi Atelier is not active in this session");
-			await saveConfigPatch(path, patch);
-		};
 		await openAtelierControlCenter(
 			pi,
 			ctx,
@@ -178,7 +180,7 @@ export default function atelierExtension(
 				toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
 			},
 			requestAllRenders,
-			guardedSavePatch,
+			lifecycleGuardedSavePatch(targetRuntime),
 		);
 	}
 
@@ -193,10 +195,6 @@ export default function atelierExtension(
 			return;
 		}
 		const targetRuntime = current.runtime;
-		const guardedSavePatch: typeof saveUserConfigPatch = async (path, patch) => {
-			if (runtime !== targetRuntime) throw new Error("Pi Atelier is not active in this session");
-			await saveConfigPatch(path, patch);
-		};
 		await openDisplaySettingsWorkspace(
 			ctx,
 			{
@@ -216,7 +214,7 @@ export default function atelierExtension(
 			},
 			join(getAgentDir(), "pi-atelier.json"),
 			requestAllRenders,
-			guardedSavePatch,
+			lifecycleGuardedSavePatch(targetRuntime),
 		);
 	}
 

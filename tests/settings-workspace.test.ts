@@ -10,8 +10,8 @@ const theme = {
 	italic: (text: string) => text,
 };
 
-function harness() {
-	let layers: DisplayLayerState = {};
+function harness(initialLayers: DisplayLayerState = {}) {
+	let layers: DisplayLayerState = structuredClone(initialLayers);
 	const render = vi.fn();
 	const live = vi.fn();
 	const close = vi.fn();
@@ -137,6 +137,64 @@ describe("Display Settings Workspace", () => {
 			expect(lines.at(-1)).toContain("╰");
 		},
 	);
+
+	it("shows layout-order provenance with effective values", () => {
+		const h = harness({
+			user: {
+				density: "compact",
+				segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry })),
+			},
+		});
+		const rendered = text(h.component);
+		expect(rendered).toContain("Density    compact      user");
+		expect(rendered).toContain("Order      user");
+		expect(rendered.indexOf("brand        hidden")).toBeLessThan(rendered.indexOf("activity     shown"));
+		expect(rendered.indexOf("activity     shown")).toBeLessThan(rendered.indexOf("metrics      required"));
+	});
+
+	it.each([40, 80, 120])(
+		"uses real footer rendering to expose every enabled Segment at %s columns",
+		(width) => {
+			const h = harness({
+				user: {
+					segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry, visible: true })),
+				},
+			});
+			const lines = h.component.render(width);
+			const rendered = lines.join("\n");
+			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+			for (const evidence of [
+				"brand        ATELIER",
+				"activity     ● CRAFTING",
+				"performance  TTFT 680ms",
+				"context      ctx 25.0% (auto)",
+				"model        artisan-1 · high",
+				"git          feat/settings*",
+				"statuses     SYNC",
+				"menu         ⌥A",
+			]) {
+				expect(rendered).toContain(evidence);
+			}
+			expect(rendered).toMatch(/metrics\s+.*cache 72%/);
+		},
+	);
+
+	it("keeps value and provenance columns fixed while focus moves", () => {
+		const h = harness();
+		const before = h.component.render(120);
+		h.component.handleInput("\u001b[B");
+		const after = h.component.render(120);
+		for (const label of ["Preset", "Density"]) {
+			const beforeLine = before.find((line) => line.includes(label));
+			const afterLine = after.find((line) => line.includes(label));
+			expect(beforeLine).toBeDefined();
+			expect(afterLine).toBeDefined();
+			expect(beforeLine?.indexOf(label === "Preset" ? "editorial" : "comfortable")).toBe(
+				afterLine?.indexOf(label === "Preset" ? "editorial" : "comfortable"),
+			);
+			expect(beforeLine?.indexOf("product")).toBe(afterLine?.indexOf("product"));
+		}
+	});
 
 	it("uses stacked panels narrowly and equal-bottom side-by-side panels widely", () => {
 		const h = harness();

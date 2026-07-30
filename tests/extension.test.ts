@@ -183,6 +183,17 @@ describe("extension registration", () => {
 		expect(h.shortcuts).toContain("ctrl+shift+r");
 	});
 
+	it("routes alt+a to the Control Center", async () => {
+		const h = harness();
+		await start(h);
+		const before = h.custom.mock.calls.length;
+
+		await h.shortcutHandlers.get("alt+a")?.(h.ctx);
+
+		expect(h.custom.mock.calls.length).toBe(before + 1);
+		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("Atelier Control Center");
+	});
+
 	it("registers the resize shortcut exactly once across session replacement", async () => {
 		const h = harness();
 		await start(h);
