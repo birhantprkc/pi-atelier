@@ -45,9 +45,10 @@ export interface SettingsWorkspace {
 const PRESETS: TemplateName[] = ["editorial", "minimal", "classic"];
 const DISPLAY_KEYS = ["preset", "density"] as const;
 type Row =
-	| { kind: "preset" | "density"; id: string }
+	| { kind: "preset"; id: "preset" }
+	| { kind: "density"; id: "density" }
 	| { kind: "segment"; id: SegmentId }
-	| { kind: "action"; id: "undo" | "revert" | "save" | "close" };
+	| { kind: "action"; id: "save" | "revert" | "undo" };
 
 const cloneDisplay = (value: DisplaySettings): DisplaySettings => ({
 	...value,
@@ -125,16 +126,15 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 	let focus = 0;
 	let undo: SessionDisplayOverride | undefined;
 	let hasUndo = false;
-	let feedback = "Session changes are active immediately";
+	let feedback = "";
 	let saving = false;
 
 	const rows = (): Row[] => [
 		...DISPLAY_KEYS.map((id) => ({ kind: id, id }) as Row),
 		...display.segmentLayout.map((entry) => ({ kind: "segment", id: entry.id }) as Row),
-		{ kind: "action", id: "undo" },
-		{ kind: "action", id: "revert" },
 		{ kind: "action", id: "save" },
-		{ kind: "action", id: "close" },
+		{ kind: "action", id: "revert" },
+		{ kind: "action", id: "undo" },
 	];
 	const rowIndex = (target: Row, allRows = rows()): number =>
 		allRows.findIndex((row) => row.kind === target.kind && row.id === target.id);
@@ -219,10 +219,9 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				{ ...cloneDisplay(display), segmentLayout: toggleSegmentVisibility(display.segmentLayout, row.id) },
 				`Toggled ${row.id}`,
 			);
-		} else if (row.id === "undo") undoOnce();
+		} else if (row.id === "save") void save();
 		else if (row.id === "revert") revert();
-		else if (row.id === "save") void save();
-		else options.close();
+		else undoOnce();
 	};
 	const move = (direction: "earlier" | "later"): void => {
 		const row = rows()[focus];
@@ -271,41 +270,39 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			const presetRow: Row = { kind: "preset", id: "preset" };
 			const densityRow: Row = { kind: "density", id: "density" };
 			const actionRow = (id: Extract<Row, { kind: "action" }>["id"]): Row => ({ kind: "action", id });
+			const sessionChanged = options.getSessionDisplayOverride() !== undefined;
+			const status = saving ? "saving…" : sessionChanged ? "session changed" : "effective";
 			const displayLines = [
-				`${marker(presetRow)} Preset     ${display.preset.padEnd(12)} ${provenance.preset}`,
-				`${marker(densityRow)} Density    ${display.density.padEnd(12)} ${provenance.density}`,
-				`  Order      ${provenance.order.padEnd(12)} ${display.segmentLayout.map((entry) => entry.id).join(" › ")}`,
+				`${marker(presetRow)} Preset       ${display.preset.padEnd(13)} ${provenance.preset}`,
+				`${marker(densityRow)} Density      ${display.density.padEnd(13)} ${provenance.density}`,
 				"",
-				`${marker(actionRow("undo"))} Undo       ${hasUndo ? "available" : "—"}`,
-				`${marker(actionRow("revert"))} Revert     Effective baseline`,
-				`${marker(actionRow("save"))} Save       ${saving ? "saving…" : "User default"}`,
-				`${marker(actionRow("close"))} Close      keep Session changes`,
+				`${marker(actionRow("save"))} Save default ${saving ? "saving…" : "S"}`,
+				`${marker(actionRow("revert"))} Revert      R`,
+				`${marker(actionRow("undo"))} Undo        ${hasUndo ? "U" : "—"}`,
 			];
-			const segmentLines = display.segmentLayout.map((entry) => {
-				const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(entry.id);
-				const status = required ? "required" : entry.visible ? "shown" : "hidden";
-				return `${marker({ kind: "segment", id: entry.id })} ${entry.id.padEnd(12)} ${status.padEnd(8)} ${provenance.visibility[entry.id]}`;
-			});
+			const segmentLines = [
+				options.theme.fg("muted", `  ● shown · ○ hidden · ◆ required · order:${provenance.order}`),
+				...display.segmentLayout.map((entry, index) => {
+					const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(entry.id);
+					const state = required ? "◆" : entry.visible ? "●" : "○";
+					const suffix = required ? "  required" : "";
+					return `${marker({ kind: "segment", id: entry.id })} ${String(index + 1).padStart(2)}  ${state} ${entry.id.padEnd(12)}${suffix}`;
+				}),
+			];
 			const previewConfig = { ...options.getRenderConfig(), ...cloneDisplay(display) };
 			const previewState = options.getPreviewState?.() ?? representativeState;
-			const previewLineWidth = Math.max(1, outerInner - 16);
-			const previewLines = display.segmentLayout
-				.filter((entry) => entry.visible)
-				.map(
-					(entry) =>
-						`${entry.id.padEnd(12)} ${renderFooterLine(
-							previewState,
-							{ ...previewConfig, segmentLayout: [{ ...entry }] },
-							options.theme,
-							previewLineWidth,
-							options.colorEnabled ?? true,
-						)}`,
-				);
-			const preview = panel("Representative Status Rail", previewLines, outerInner, options.theme, true);
+			const previewLine = renderFooterLine(
+				previewState,
+				previewConfig,
+				options.theme,
+				Math.max(1, outerInner - 6),
+				options.colorEnabled ?? true,
+			);
+			const preview = panel("Preview", [`  ${previewLine}`], outerInner, options.theme, true);
 			let editing: string[];
-			if (outerInner >= 76) {
-				const leftWidth = Math.floor((outerInner - 1) * 0.45);
-				const rightWidth = outerInner - 1 - leftWidth;
+			if (outerInner >= 72) {
+				const leftWidth = Math.max(28, Math.floor((outerInner - 2) * 0.4));
+				const rightWidth = outerInner - leftWidth - 2;
 				const height = Math.max(displayLines.length, segmentLines.length);
 				const left = panel(
 					"Display",
@@ -314,32 +311,45 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 					options.theme,
 				);
 				const right = panel(
-					"Segments",
+					"Segment Editor",
 					[...segmentLines, ...Array(Math.max(0, height - segmentLines.length)).fill("")],
 					rightWidth,
 					options.theme,
 				);
-				editing = left.map((line, index) => `${line} ${right[index] ?? fit("", rightWidth)}`);
+				editing = left.map((line, index) => `${line}  ${right[index] ?? fit("", rightWidth)}`);
 			} else {
 				editing = [
 					...panel("Display", displayLines, outerInner, options.theme),
-					...panel("Segments", segmentLines, outerInner, options.theme),
+					"",
+					...panel("Segment Editor", segmentLines, outerInner, options.theme),
 				];
 			}
 			const selected = allRows[focus];
-			const selectedRequired =
-				selected?.kind === "segment" && (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(selected.id);
-			const guidance =
-				selected?.kind === "segment"
-					? selectedRequired
-						? "Required · Shift+↑/↓ Reorder · U Undo · R Revert · S Save · Esc Close"
-						: "Enter/Space Toggle · Shift+↑/↓ Reorder · U Undo · R Revert · S Save · Esc Close"
-					: "↑/↓ Select · Enter/Space Change · U Undo · R Revert · S Save · Esc Close";
+			let guidance = "↑/↓ Select · Enter Change · S Save · Esc Close";
+			if (selected?.kind === "segment") {
+				const required = (REQUIRED_SEGMENT_IDS as readonly SegmentId[]).includes(selected.id);
+				const visibility = required
+					? "required"
+					: display.segmentLayout.find((entry) => entry.id === selected.id)?.visible
+						? "shown"
+						: "hidden";
+				guidance = `${selected.id} · ${visibility} · source:${provenance.visibility[selected.id]} · order:${provenance.order} · ${required ? "Shift+↑/↓ Reorder" : "Enter Toggle · Shift+↑/↓ Reorder"}`;
+			} else if (selected?.kind === "preset" || selected?.kind === "density") {
+				guidance = `${selected.id} · source:${provenance[selected.id]} · Enter Change · U Undo`;
+			} else if (selected?.kind === "action") {
+				guidance = `${selected.id} · Enter or ${selected.id === "save" ? "S" : selected.id === "revert" ? "R" : "U"}`;
+			}
 			const content = [
-				fit(options.theme.bold("Display Settings") + "  Session overrides → Effective preview", outerInner),
+				fit(
+					`${options.theme.bold("DISPLAY SETTINGS")}  ${options.theme.fg(sessionChanged ? "warning" : "success", status)}`,
+					outerInner,
+				),
+				fit(options.theme.fg("muted", "↑/↓ Select · Enter Change · S Save · Esc Close"), outerInner),
+				"",
 				...preview,
+				"",
 				...editing,
-				fit(feedback, outerInner),
+				...(feedback ? ["", fit(feedback, outerInner)] : []),
 				fit(guidance, outerInner),
 			];
 			const border = (text: string) => options.theme.fg("borderAccent", text);

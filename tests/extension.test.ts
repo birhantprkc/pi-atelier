@@ -425,7 +425,7 @@ describe("extension registration", () => {
 		const before = h.custom.mock.calls.length;
 		await command(h, "display");
 		expect(h.custom.mock.calls.length).toBe(before + 1);
-		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("Display Settings");
+		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("DISPLAY SETTINGS");
 
 		const printed = harness("print");
 		await command(printed, "display");

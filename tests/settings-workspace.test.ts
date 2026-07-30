@@ -138,7 +138,7 @@ describe("Display Settings Workspace", () => {
 		},
 	);
 
-	it("shows layout-order provenance with effective values", () => {
+	it("shows provenance without repeating the complete layout", () => {
 		const h = harness({
 			user: {
 				density: "compact",
@@ -146,38 +146,27 @@ describe("Display Settings Workspace", () => {
 			},
 		});
 		const rendered = text(h.component);
-		expect(rendered).toContain("Density    compact      user");
-		expect(rendered).toContain("Order      user");
-		expect(rendered.indexOf("brand        hidden")).toBeLessThan(rendered.indexOf("activity     shown"));
-		expect(rendered.indexOf("activity     shown")).toBeLessThan(rendered.indexOf("metrics      required"));
+		expect(rendered).toContain("Density      compact       user");
+		expect(rendered).toContain("order:user");
+		expect(rendered).not.toContain("brand › activity");
+		expect(rendered.indexOf("1  ○ brand")).toBeLessThan(rendered.indexOf("2  ● activity"));
+		expect(rendered.indexOf("2  ● activity")).toBeLessThan(rendered.indexOf("3  ◆ metrics"));
 	});
 
-	it.each([40, 80, 120])(
-		"uses real footer rendering to expose every enabled Segment at %s columns",
-		(width) => {
-			const h = harness({
-				user: {
-					segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry, visible: true })),
-				},
-			});
-			const lines = h.component.render(width);
-			const rendered = lines.join("\n");
-			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
-			for (const evidence of [
-				"brand        ATELIER",
-				"activity     ● CRAFTING",
-				"performance  TTFT 680ms",
-				"context      ctx 25.0% (auto)",
-				"model        artisan-1 · high",
-				"git          feat/settings*",
-				"statuses     SYNC",
-				"menu         ⌥A",
-			]) {
-				expect(rendered).toContain(evidence);
-			}
-			expect(rendered).toMatch(/metrics\s+.*cache 72%/);
-		},
-	);
+	it.each([40, 80, 120])("uses one real responsive Status Rail preview at %s columns", (width) => {
+		const h = harness({
+			user: {
+				segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry, visible: true })),
+			},
+		});
+		const lines = h.component.render(width);
+		const previewStart = lines.findIndex((line) => line.includes(" Preview "));
+		expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+		expect(previewStart).toBeGreaterThan(0);
+		expect(lines[previewStart + 1]).toContain("CRAFTING");
+		expect(lines[previewStart + 2]).toContain("└");
+		expect(lines.join("\n")).not.toContain("brand        ATELIER");
+	});
 
 	it("keeps value and provenance columns fixed while focus moves", () => {
 		const h = harness();
@@ -200,10 +189,10 @@ describe("Display Settings Workspace", () => {
 		const h = harness();
 		const narrow = h.component.render(40);
 		expect(narrow.findIndex((line) => line.includes(" Display "))).toBeLessThan(
-			narrow.findIndex((line) => line.includes(" Segments ")),
+			narrow.findIndex((line) => line.includes(" Segment Editor ")),
 		);
 		const wide = h.component.render(120);
-		const sideBySide = wide.find((line) => line.includes(" Display ") && line.includes(" Segments "));
+		const sideBySide = wide.find((line) => line.includes(" Display ") && line.includes(" Segment Editor "));
 		expect(sideBySide).toBeDefined();
 		expect(wide.some((line) => (line.match(/└/g) ?? []).length === 2)).toBe(true);
 	});
