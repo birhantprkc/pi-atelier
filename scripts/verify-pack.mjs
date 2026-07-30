@@ -15,6 +15,7 @@ const required = [
 	"src/footer.ts",
 	"src/state.ts",
 	"src/menu.ts",
+	"src/settings-workspace.ts",
 	"src/palette.ts",
 	"src/run-activity.ts",
 	"assets/preview.png",

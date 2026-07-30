@@ -97,14 +97,19 @@ Open Pi Atelier with:
 /atelier
 ```
 
-The default shortcut is `alt+a`. The menu contains:
+The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Model** — choose an authenticated model or thinking level
-- **Tools** — search and toggle active Pi tools
-- **Display** — switch presets and save user defaults
-- **Session** — inspect, rename, or compact the current session
-- **Sidebar** — show or hide the docked information rail and expand or collapse tool-name details
-- **Completion notifications** — enable or disable native system notifications on macOS and Windows
+- **Settings** — the Display Settings Workspace, completion notifications, and the persisted sidebar tool-list preference
+- **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
+- **Actions** — session details, rename, and safe compaction
+
+Open the Display Settings Workspace directly with:
+
+```text
+/atelier display
+```
+
+The workspace shows the real Status Rail renderer as a representative preview. Use Up/Down to select, Enter or Space to change a preset, density, or optional Segment, and Shift+Up/Shift+Down to reorder any Segment (including required `metrics` and `context`). `U` performs one-step Undo, `R` reverts Display Session overrides to the Effective lower-layer baseline, `S` saves the current Display as the User default, and Escape closes while retaining active Session overrides. Preset application is one atomic mutation, and Save keeps the workspace open so its result or any failure remains visible.
 
 Additional commands:
 
@@ -194,9 +199,9 @@ Complete example:
 
 `segmentLayout` is ordered and every entry has explicit visibility. Pi Atelier preserves the first valid occurrence of each known ID, appends omitted IDs in Product order, and repairs `metrics` and `context` to visible without moving them. Unknown, duplicate, or malformed values produce one de-duplicated warning. Brand and extension Statuses rendering is controlled only by this normalized layout. Performance remains available for TTFT/TPS telemetry but is hidden in all three compatibility templates.
 
-Product defaults are layered with User, trusted Project, then Session settings. Pi Atelier tracks the source of density, preset identity, layout order, and each visibility value; untrusted project configuration is not read. Transitional menu changes are Session-scoped until **Save as user default** atomically patches `preset`, `density`, and `segmentLayout` while preserving unrelated keys. Any density, order, or visibility combination that does not exactly match a complete template has the `custom` preset identity; restoring an exact template restores its named identity.
+Product defaults are layered with **User default**, trusted **Project override**, then **Session overrides**. The resulting value is the **Effective baseline** shown by the workspace. Pi Atelier tracks the source of density, preset identity, layout order, and each visibility value; untrusted project configuration is not read. Workspace changes are Session-scoped and immediately update the live rail. **Save** atomically patches only `preset`, `density`, and a cloned `segmentLayout` into User configuration while preserving unrelated and unknown keys; it never writes Project configuration. **Revert** clears only Display Session fields, and one-step **Undo** restores the raw Session snapshot, including after Revert. Any density, order, or visibility combination that does not exactly match a complete template has the `custom` preset identity; restoring an exact template restores its named identity.
 
-Legacy `segments`, `ornament`, and `showExtensionStatuses` keys are still accepted while loading JSON and translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. New configuration should use `segmentLayout`.
+Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
 

@@ -24,4 +24,12 @@ describe("npm package contract", () => {
 		expect(readme).toContain("72");
 		expect(readme).toContain("version-sensitive");
 	});
+
+	it("publishes the direct Display workspace and keyboard contract", async () => {
+		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+		expect(readme).toContain("/atelier display");
+		expect(readme).toContain("Shift+Up/Shift+Down");
+		expect(readme).toContain("Undo");
+		expect(readme).toContain("Revert");
+	});
 });

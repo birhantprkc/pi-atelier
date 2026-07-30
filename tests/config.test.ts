@@ -34,6 +34,23 @@ describe("configuration", () => {
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 	});
 
+	it("applies named templates atomically before same-layer deviations", () => {
+		const named = validateConfig({ preset: "minimal" });
+		expect(named.config).toMatchObject({ preset: "minimal", density: "compact" });
+		expect(named.config.segmentLayout).toEqual(DISPLAY_TEMPLATES.minimal.segmentLayout);
+
+		const deviated = validateConfig({ preset: "minimal", density: "comfortable" });
+		expect(deviated.config.preset).toBe("custom");
+		expect(deviated.config.segmentLayout).toEqual(DISPLAY_TEMPLATES.minimal.segmentLayout);
+	});
+
+	it("preserves the public validateConfig base Display values", () => {
+		const base = { ...DEFAULT_CONFIG, ...DISPLAY_TEMPLATES.minimal };
+		const result = validateConfig({ shortcut: "ctrl+x" }, base);
+		expect(result.config).toMatchObject({ preset: "minimal", density: "compact", shortcut: "ctrl+x" });
+		expect(result.config.segmentLayout).toEqual(DISPLAY_TEMPLATES.minimal.segmentLayout);
+	});
+
 	it("merges user, trusted project, then session with actionable provenance", async () => {
 		await writeJson(userPath, { density: "compact" });
 		await writeJson(projectPath, {

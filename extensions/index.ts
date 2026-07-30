@@ -16,7 +16,7 @@ import {
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
 import { createFooterComponent, type ThemeLike } from "../src/footer.js";
-import { openAtelierMenu } from "../src/menu.js";
+import { openAtelierControlCenter, openDisplaySettingsWorkspace } from "../src/menu.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import {
 	buildSidebarSnapshot,
@@ -38,7 +38,7 @@ export default function atelierExtension(
 	pi: ExtensionAPI,
 	dependencies: AtelierExtensionDependencies = {},
 ): void {
-	const saveConfig = dependencies.saveConfig ?? saveUserConfig;
+	const _saveConfig = dependencies.saveConfig ?? saveUserConfig;
 	const saveConfigPatch = dependencies.saveConfigPatch ?? saveUserConfigPatch;
 	let runtime: AtelierRuntime | undefined;
 	let currentContext: ExtensionContext | undefined;
@@ -155,13 +155,18 @@ export default function atelierExtension(
 	}
 
 	async function openMenu(ctx: ExtensionContext): Promise<void> {
-		if (!runtime || !sidebar) {
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime || !current.sidebar) {
 			ctx.ui.notify("Pi Atelier is not active in this session", "warning");
 			return;
 		}
-		const targetRuntime = runtime;
-		const targetSidebar = sidebar;
-		await openAtelierMenu(
+		const targetRuntime = current.runtime;
+		const targetSidebar = current.sidebar;
+		const guardedSavePatch: typeof saveUserConfigPatch = async (path, patch) => {
+			if (runtime !== targetRuntime) throw new Error("Pi Atelier is not active in this session");
+			await saveConfigPatch(path, patch);
+		};
+		await openAtelierControlCenter(
 			pi,
 			ctx,
 			targetRuntime,
@@ -172,8 +177,46 @@ export default function atelierExtension(
 				isToolListExpanded: () => targetRuntime.getConfig().showSidebarToolNames,
 				toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
 			},
-			saveConfig,
-			saveConfigPatch,
+			requestAllRenders,
+			guardedSavePatch,
+		);
+	}
+
+	async function openDisplay(ctx: ExtensionContext): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("Pi Atelier Display settings require TUI mode", "warning");
+			return;
+		}
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime) {
+			ctx.ui.notify("Pi Atelier is not active in this session", "warning");
+			return;
+		}
+		const targetRuntime = current.runtime;
+		const guardedSavePatch: typeof saveUserConfigPatch = async (path, patch) => {
+			if (runtime !== targetRuntime) throw new Error("Pi Atelier is not active in this session");
+			await saveConfigPatch(path, patch);
+		};
+		await openDisplaySettingsWorkspace(
+			ctx,
+			{
+				getConfig: () => targetRuntime.getConfig(),
+				getDisplaySettings: () => targetRuntime.getDisplaySettings(),
+				getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
+				getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
+				replaceSessionDisplayOverride: (value) => {
+					if (runtime === targetRuntime) targetRuntime.replaceSessionDisplayOverride(value);
+				},
+				clearSessionDisplayOverride: () => {
+					if (runtime === targetRuntime) targetRuntime.clearSessionDisplayOverride();
+				},
+				applySavedUserDisplayPatch: (patch) => {
+					if (runtime === targetRuntime) targetRuntime.applySavedUserDisplayPatch(patch);
+				},
+			},
+			join(getAgentDir(), "pi-atelier.json"),
+			requestAllRenders,
+			guardedSavePatch,
 		);
 	}
 
@@ -223,6 +266,14 @@ export default function atelierExtension(
 		handler: async (args, ctx) => {
 			const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
 			const [action, sidebarAction, ...extra] = parts;
+			if (action === "display") {
+				if (sidebarAction !== undefined || extra.length > 0) {
+					ctx.ui.notify("Usage: /atelier display", "warning");
+					return;
+				}
+				await openDisplay(ctx);
+				return;
+			}
 			if (action === "sidebar") {
 				if (ctx.mode !== "tui") {
 					ctx.ui.notify("Pi Atelier sidebar requires TUI mode", "warning");

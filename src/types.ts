@@ -49,6 +49,13 @@ export interface DisplayLayerState {
 	session?: Record<string, unknown>;
 }
 
+/** A detached copy of the raw Session Display layer. */
+export type SessionDisplayOverride = DisplayPatch & {
+	segments?: unknown;
+	ornament?: unknown;
+	showExtensionStatuses?: unknown;
+};
+
 export interface ResponsePerformance {
 	ttftMs: number;
 	tokensPerSecond?: number;

@@ -72,153 +72,31 @@ function harness() {
 	return { actions, pi, ctx, runtime, save, savePatch };
 }
 
-describe("menu presentation", () => {
-	it.each([
-		[
-			false,
-			{
-				value: "sidebar",
-				label: "Sidebar: Off",
-				description: "Show the docked information rail",
-			},
-		],
-		[
-			true,
-			{
-				value: "sidebar",
-				label: "Sidebar: On",
-				description: "Hide the docked information rail",
-			},
-		],
-	] as const)("shows and toggles the dynamic sidebar state (%s)", async (visible, expected) => {
-		rootMenuItems.length = 0;
-		const sidebar: SidebarControls = {
-			isVisible: vi.fn(() => visible),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
-		let invocation = 0;
-		const ctx = {
+describe("Control Center presentation", () => {
+	function contextWithSelections(values: string[]) {
+		return {
 			mode: "tui",
-			ui: {
-				custom: vi.fn(
-					(factory: (...args: any[]) => unknown) =>
-						new Promise((resolve) => {
-							const value = invocation++ === 0 ? "sidebar" : "close";
-							factory(
-								{ requestRender: vi.fn() },
-								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
-								{},
-								resolve,
-							);
-							resolve(value);
-						}),
-				),
-			},
-		};
-
-		await openAtelierMenu({} as never, ctx as never, harness().runtime as never, "/tmp/user.json", sidebar);
-
-		expect(rootMenuItems[0]).toContainEqual(expected);
-		expect(sidebar.toggle).toHaveBeenCalledOnce();
-	});
-
-	it("shows and persists the completion notification toggle", async () => {
-		rootMenuItems.length = 0;
-		const h = harness();
-		const sidebar: SidebarControls = {
-			isVisible: vi.fn(() => false),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
-		let invocation = 0;
-		const ctx = {
-			mode: "tui",
+			model: { id: "old", provider: "provider" },
+			modelRegistry: { getAvailable: vi.fn().mockReturnValue([]) },
+			sessionManager: { getSessionFile: vi.fn().mockReturnValue("/tmp/session.jsonl") },
+			compact: vi.fn(),
 			ui: {
 				notify: vi.fn(),
-				custom: vi.fn(
-					(factory: (...args: any[]) => unknown) =>
-						new Promise((resolve) => {
-							const value = invocation++ === 0 ? "notifications" : "close";
-							factory(
-								{ requestRender: vi.fn() },
-								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
-								{},
-								resolve,
-							);
-							resolve(value);
-						}),
-				),
-			},
-		};
-
-		await openAtelierMenu(
-			{} as never,
-			ctx as never,
-			h.runtime as never,
-			"/tmp/user.json",
-			sidebar,
-			h.save,
-			h.savePatch,
-		);
-
-		expect(rootMenuItems[0]).toContainEqual({
-			value: "notifications",
-			label: "Completion notifications: On",
-			description: "Notify when a turn settles or Pi requests input",
-		});
-		expect(h.runtime.getConfig().completionNotifications).toBe(false);
-		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { completionNotifications: false });
-		expect(h.save).not.toHaveBeenCalled();
-	});
-
-	it("offers performance in the segment toggle and enables it", async () => {
-		rootMenuItems.length = 0;
-		const h = harness();
-		const sidebar: SidebarControls = {
-			isVisible: vi.fn(() => false),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
-		let invocation = 0;
-		let offered: string[] = [];
-		const ctx = {
-			mode: "tui",
-			ui: {
-				notify: vi.fn(),
-				select: vi.fn((title: string, options: string[]) => {
-					if (title !== "Toggle footer segment") return Promise.resolve("Toggle segments");
-					offered = options;
-					return Promise.resolve("○ performance");
+				custom: vi.fn((factory: (...args: any[]) => unknown) => {
+					const value = values.shift();
+					factory(
+						{ requestRender: vi.fn() },
+						{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+						{},
+						vi.fn(),
+					);
+					return Promise.resolve(value);
 				}),
-				custom: vi.fn(
-					(factory: (...args: any[]) => unknown) =>
-						new Promise((resolve) => {
-							const value = invocation++ === 0 ? "display" : "close";
-							factory(
-								{ requestRender: vi.fn() },
-								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
-								{},
-								resolve,
-							);
-							resolve(value);
-						}),
-				),
 			},
 		};
+	}
 
-		await openAtelierMenu({} as never, ctx as never, h.runtime as never, "/tmp/user.json", sidebar);
-
-		expect(offered).toContain("○ performance");
-		expect(h.runtime.getConfig().segmentLayout.find((entry) => entry.id === "performance")?.visible).toBe(
-			true,
-		);
-	});
-
-	it("shows and toggles collapsed sidebar tool details", async () => {
+	it("partitions Settings, Controls, and Actions at the root with current Sidebar state", async () => {
 		rootMenuItems.length = 0;
 		const sidebar: SidebarControls = {
 			isVisible: vi.fn(() => true),
@@ -226,51 +104,46 @@ describe("menu presentation", () => {
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
 		};
-		let invocation = 0;
-		const ctx = {
-			mode: "tui",
-			ui: {
-				custom: vi.fn(
-					(factory: (...args: any[]) => unknown) =>
-						new Promise((resolve) => {
-							const value = invocation++ === 0 ? "sidebar-tools" : "close";
-							factory(
-								{ requestRender: vi.fn() },
-								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
-								{},
-								resolve,
-							);
-							resolve(value);
-						}),
-				),
-			},
+		await openAtelierMenu(
+			{} as never,
+			contextWithSelections(["close"]) as never,
+			harness().runtime as never,
+			"/tmp/user.json",
+			sidebar,
+		);
+		expect(rootMenuItems[0]?.map((item) => item.label)).toEqual(["Settings", "Controls", "Actions", "Close"]);
+		expect(rootMenuItems[0]?.find((item) => item.value === "controls")?.description).toContain("Sidebar: On");
+	});
+
+	it("keeps Sidebar visibility in Controls and session-scoped", async () => {
+		rootMenuItems.length = 0;
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
 		};
-
-		await openAtelierMenu({} as never, ctx as never, harness().runtime as never, "/tmp/user.json", sidebar);
-
-		expect(rootMenuItems[0]).toContainEqual({
-			value: "sidebar-tools",
-			label: "Tool list: Collapsed",
-			description: "Show active tool names in the sidebar",
-		});
-		expect(sidebar.toggleToolList).toHaveBeenCalledOnce();
+		await openAtelierMenu(
+			{
+				getThinkingLevel: vi.fn().mockReturnValue("medium"),
+				getActiveTools: vi.fn().mockReturnValue([]),
+			} as never,
+			contextWithSelections(["controls", "sidebar", "back", "close"]) as never,
+			harness().runtime as never,
+			"/tmp/user.json",
+			sidebar,
+		);
+		expect(sidebar.toggle).toHaveBeenCalledOnce();
 	});
 
 	it("uses a heavy theme-aware border that fills the available width", () => {
-		const theme = {
-			fg: vi.fn((_color: string, text: string) => text),
-			bold: vi.fn((text: string) => text),
-		};
+		const theme = { fg: vi.fn((_color: string, text: string) => text), bold: vi.fn((text: string) => text) };
 		expect(renderMenuBorder(theme, 6)).toBe("━━━━━━");
 		expect(theme.fg).toHaveBeenCalledWith("borderAccent", "━━━━━━");
-		expect(theme.bold).toHaveBeenCalled();
 	});
 
 	it("frames every content row with heavy vertical borders and corners", () => {
-		const theme = {
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
-		};
+		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 		expect(renderMenuFrame(theme, ["Hi"], 8)).toEqual(["┏━━━━━━┓", "┃Hi    ┃", "┗━━━━━━┛"]);
 	});
 });

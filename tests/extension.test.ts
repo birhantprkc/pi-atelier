@@ -408,6 +408,20 @@ describe("extension registration", () => {
 		}
 	});
 
+	it("opens the Display workspace directly and rejects it outside TUI mode", async () => {
+		const h = harness();
+		await start(h);
+		const before = h.custom.mock.calls.length;
+		await command(h, "display");
+		expect(h.custom.mock.calls.length).toBe(before + 1);
+		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("Display Settings");
+
+		const printed = harness("print");
+		await command(printed, "display");
+		expect(printed.custom).not.toHaveBeenCalled();
+		expect(printed.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("TUI mode"), "warning");
+	});
+
 	it("warns instead of opening the sidebar outside TUI mode", async () => {
 		const h = harness("print");
 		await command(h, "sidebar");
@@ -583,27 +597,10 @@ describe("extension registration", () => {
 		try {
 			const h = harness();
 			await start(h);
-			const selections = ["display", "close"];
-			h.ctx.ui.select = vi.fn((title: string) =>
-				Promise.resolve(title === "Display controls" ? "Toggle segments" : "○ performance"),
-			);
-			h.ctx.ui.custom = vi.fn((factory: (...args: any[]) => any) => {
-				return new Promise<string | undefined>((resolve) => {
-					const done = vi.fn((value: string | undefined) => resolve(value));
-					factory(
-						{ requestRender: vi.fn() },
-						{
-							fg: (_color: string, text: string) => text,
-							bold: (text: string) => text,
-							italic: (text: string) => text,
-						},
-						{},
-						done,
-					);
-					done(selections.shift());
-				});
-			});
-			await command(h, "");
+			await command(h, "display");
+			const workspace = h.overlays.at(-1)?.component;
+			for (let index = 0; index < 5; index += 1) workspace.handleInput("\u001b[B");
+			workspace.handleInput(" ");
 
 			const footerRequestRender = vi.fn();
 			const footer = h.setFooter.mock.calls[0]?.[0](

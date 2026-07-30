@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+	applyDisplayTemplate,
 	derivePresetIdentity,
 	isSegmentId,
 	legacySegmentsToLayout,
@@ -17,6 +18,7 @@ import {
 	type PresetName,
 	type SegmentId,
 	type SegmentLayout,
+	type TemplateName,
 } from "./types.js";
 
 export interface ConfigLoadResult {
@@ -113,11 +115,14 @@ function parseLegacySegments(value: unknown, warnings: string[]): SegmentLayout 
 	return legacySegmentsToLayout(valid);
 }
 
-export function resolveDisplayLayers(layers: DisplayLayerState): DisplayResolution {
+export function resolveDisplayLayers(
+	layers: DisplayLayerState,
+	base: DisplaySettings = DEFAULT_CONFIG,
+): DisplayResolution {
 	let display: DisplaySettings = {
-		preset: DEFAULT_CONFIG.preset,
-		density: DEFAULT_CONFIG.density,
-		segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry })),
+		preset: base.preset,
+		density: base.density,
+		segmentLayout: base.segmentLayout.map((entry) => ({ ...entry })),
 	};
 	const visibility = Object.fromEntries(PRODUCT_SEGMENT_ORDER.map((id) => [id, "product"])) as Record<
 		SegmentId,
@@ -152,6 +157,13 @@ export function resolveDisplayLayers(layers: DisplayLayerState): DisplayResoluti
 				display.preset = input.preset as PresetName;
 				provenance.preset = source;
 				suppliedPreset = true;
+				if (input.preset !== "custom") {
+					display = applyDisplayTemplate(input.preset as TemplateName);
+					provenance.density = source;
+					provenance.order = source;
+					for (const id of PRODUCT_SEGMENT_ORDER) provenance.visibility[id] = source;
+					changedTemplateField = true;
+				}
 			} else
 				warnings.push(
 					typeof input.preset === "string" ? `Unknown preset: ${input.preset}` : "preset must be a string",
@@ -285,7 +297,7 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 	applyNonDisplay(input, config, warnings);
 	const inputRecord = record(input);
 	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
-	const resolved = resolveDisplayLayers(displayLayers);
+	const resolved = resolveDisplayLayers(displayLayers, base);
 	Object.assign(config, resolved.display);
 	return {
 		config,

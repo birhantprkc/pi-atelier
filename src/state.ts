@@ -11,6 +11,7 @@ import type {
 	DisplayPatch,
 	DisplayProvenance,
 	DisplaySettings,
+	SessionDisplayOverride,
 } from "./types.js";
 import {
 	inspectWorkspacePulse,
@@ -96,16 +97,84 @@ export class AtelierRuntime {
 		return { ...this.#displayProvenance, visibility: { ...this.#displayProvenance.visibility } };
 	}
 
-	setSessionDisplayPatch(patch: DisplayPatch | undefined): void {
-		if (patch) {
-			this.#displayLayers = {
-				...this.#displayLayers,
-				session: { ...this.#displayLayers.session, ...patch },
-			};
-		} else {
-			const { session: _session, ...lowerLayers } = this.#displayLayers;
-			this.#displayLayers = lowerLayers;
+	getSessionDisplayOverride(): SessionDisplayOverride | undefined {
+		const session = this.#displayLayers.session;
+		if (!session) return undefined;
+		const result: SessionDisplayOverride = {};
+		for (const key of [
+			"preset",
+			"density",
+			"segmentLayout",
+			"segments",
+			"ornament",
+			"showExtensionStatuses",
+		] as const) {
+			if (!(key in session)) continue;
+			const value = session[key];
+			(result as Record<string, unknown>)[key] =
+				key === "segmentLayout" && Array.isArray(value)
+					? value.map((entry) => (typeof entry === "object" && entry !== null ? { ...entry } : entry))
+					: Array.isArray(value)
+						? [...value]
+						: value;
 		}
+		return Object.keys(result).length > 0 ? result : undefined;
+	}
+
+	replaceSessionDisplayOverride(override: SessionDisplayOverride | undefined): void {
+		const session = { ...this.#displayLayers.session };
+		for (const key of [
+			"preset",
+			"density",
+			"segmentLayout",
+			"segments",
+			"ornament",
+			"showExtensionStatuses",
+		] as const)
+			delete session[key];
+		if (override) Object.assign(session, structuredClone(override));
+		const { session: _oldSession, ...lower } = this.#displayLayers;
+		this.#displayLayers = Object.keys(session).length > 0 ? { ...lower, session } : lower;
+		this.#resolveDisplay();
+	}
+
+	clearSessionDisplayOverride(): void {
+		this.replaceSessionDisplayOverride(undefined);
+	}
+
+	setSessionDisplayPatch(patch: DisplayPatch | undefined): void {
+		if (!patch) {
+			this.clearSessionDisplayOverride();
+			return;
+		}
+		this.replaceSessionDisplayOverride({ ...this.getSessionDisplayOverride(), ...structuredClone(patch) });
+	}
+
+	/** Applies a successfully persisted User patch, then safely drops redundant Session fields. */
+	applySavedUserDisplayPatch(patch: DisplayPatch, canonicalizeSession = true): void {
+		this.#displayLayers = {
+			...this.#displayLayers,
+			user: { ...this.#displayLayers.user, ...structuredClone(patch) },
+		};
+		if (canonicalizeSession) {
+			const target = resolveDisplayLayers(this.#displayLayers).display;
+			let session = { ...this.#displayLayers.session };
+			for (const key of ["preset", "density", "segmentLayout"] as const) {
+				if (!(key in session)) continue;
+				const candidate = { ...session };
+				delete candidate[key];
+				const { session: _oldSession, ...lower } = this.#displayLayers;
+				const layers: DisplayLayerState =
+					Object.keys(candidate).length > 0 ? { ...lower, session: candidate } : lower;
+				if (isDeepStrictEqual(resolveDisplayLayers(layers).display, target)) session = candidate;
+			}
+			const { session: _oldSession, ...lower } = this.#displayLayers;
+			this.#displayLayers = Object.keys(session).length > 0 ? { ...lower, session } : lower;
+		}
+		this.#resolveDisplay();
+	}
+
+	#resolveDisplay(): void {
 		const resolved = resolveDisplayLayers(this.#displayLayers);
 		this.#displayProvenance = resolved.provenance;
 		this.#config = { ...this.#config, ...resolved.display };
