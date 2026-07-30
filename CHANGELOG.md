@@ -6,6 +6,8 @@
 - Keep inspecting, clean, non-repository, unavailable, and stale workspace states explicit while preserving the footer's compact dirty marker.
 - Refresh Workspace Pulse after debounced tool activity, Turn boundaries, and branch changes without polling, file watching, test execution, or untracked-content reads.
 
+- Add an opt-in `performance` Status Rail segment for live TTFT and estimated/final TPS, while preserving the existing default presets.
+
 ## 0.5.0 — 2026-07-27
 
 - Keep fixed TTFT and TPS rows in the always-visible Activity panel, using `~` placeholders before values are available and `~`-marked live TPS estimates corrected from final usage when each response ends.

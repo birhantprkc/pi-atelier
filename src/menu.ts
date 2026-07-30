@@ -377,7 +377,15 @@ export async function openAtelierMenu(
 			if (action?.endsWith("preset")) actions.setPreset(action.split(" ")[0]?.toLowerCase() as PresetName);
 			else if (action === "Toggle segments") {
 				const current = runtime.getConfig().segments;
-				const optional: SegmentId[] = ["brand", "activity", "model", "git", "statuses", "menu"];
+				const optional: SegmentId[] = [
+					"brand",
+					"activity",
+					"performance",
+					"model",
+					"git",
+					"statuses",
+					"menu",
+				];
 				const labels = optional.map((id) => `${current.includes(id) ? "✓" : "○"} ${id}`);
 				const selected = await ctx.ui.select("Toggle footer segment", labels);
 				const id = optional[labels.indexOf(selected ?? "")];

@@ -81,6 +81,8 @@ pi -e .
 - `read`, `write`, and `hit` detailed cache telemetry in the classic preset
 - `$` cumulative estimated cost
 - `(sub)` OAuth subscription-backed access
+- `TTFT` opt-in time to first token for the latest response
+- `TPS` opt-in generation throughput, prefixed with `~` while it is estimated
 - `ctx` context utilization
 - `(auto)` automatic context compaction
 - `*` tracked working-tree changes
@@ -139,7 +141,7 @@ On macOS, `osascript` notifications are attributed to Script Editor. They respec
 
 Use `/atelier` or `alt+a` to disable or re-enable completion notifications. The preference is saved to user configuration.
 
-The Activity panel always reserves fixed rows for the run summary and response performance. Before a value is available it displays `TTFT ~ · TPS ~`, so those metrics never shift position or disappear as requests start or terminal height changes. During an agent run, the sidebar also adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. TTFT runs from provider request dispatch to the first generated response content. During streaming, TPS updates from Pi's conservative output-token estimate and carries a `~` marker; after the response ends, final output usage replaces the estimate and removes the marker. The footer remains a stable one-line status rail and never repeats tool names, tool history, or response-performance metrics.
+The Activity panel always reserves fixed rows for the run summary and response performance. Before a value is available it displays `TTFT ~ · TPS ~`, so those metrics never shift position or disappear as requests start or terminal height changes. During an agent run, the sidebar also adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. TTFT runs from provider request dispatch to the first generated response content. During streaming, TPS updates from Pi's conservative output-token estimate and carries a `~` marker; after the response ends, final output usage replaces the estimate and removes the marker. The footer remains a stable one-line status rail; it shows response-performance metrics only when the opt-in `performance` segment is enabled and otherwise omits them.
 
 The sidebar uses a non-overlapping split presentation: Pi's workspace reflows into the columns to the left of the rail instead of rendering underneath it. It starts at 44 columns, can be resized between 28 and 72 columns, always preserves at least 64 columns for Pi, and auto-hides below 92 terminal columns.
 
@@ -191,7 +193,7 @@ Complete example:
 }
 ```
 
-Unknown or invalid values are ignored with one warning. The required `metrics` and `context` segments are restored if omitted. The editorial preset always suppresses the brand ornament; `restrained` displays `ATELIER` only for non-editorial configurations that include the `brand` segment.
+Unknown or invalid values are ignored with one warning. The required `metrics` and `context` segments are restored if omitted. Add `"performance"` to `segments` to show `TTFT` and `TPS` in the Status Rail; the segment is opt-in and is omitted from all presets by default. During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Enabling the segment from **Toggle segments** appends it to the end of the rail; edit `segments` or use **Reorder segments** to place it elsewhere. The editorial preset always suppresses the brand ornament; `restrained` displays `ATELIER` only for non-editorial configurations that include the `brand` segment.
 
 ## Presets
 
@@ -201,7 +203,7 @@ Unknown or invalid values are ignored with one warning. The required `metrics` a
 
 ## Responsive behavior
 
-The Status Rail removes optional information by priority as the terminal narrows instead of switching to fixed layouts. Brand and extension statuses are removed first, followed by Git and thinking level, cost, model, input and output totals, cache, and finally the menu shortcut. Activity and context are retained longest, and the result is truncated safely rather than wrapping when space is exceptionally tight.
+The Status Rail removes optional information by priority as the terminal narrows instead of switching to fixed layouts. Brand and extension statuses are removed first, followed by Git and thinking level, cost, model, input and output totals, response performance, cache, and finally the menu shortcut. Activity and context are retained longest, and the result is truncated safely rather than wrapping when space is exceptionally tight.
 
 ## Privacy and security
 

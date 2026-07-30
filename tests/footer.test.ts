@@ -100,6 +100,79 @@ const state: AtelierState = {
 	extensionStatuses: [],
 };
 
+describe("footer performance", () => {
+	it("renders configured response performance in the Status Rail", () => {
+		const config: AtelierConfig = {
+			...DEFAULT_CONFIG,
+			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
+		};
+		const line = stripAnsi(renderFooterLine(state, config, plainTheme, 160));
+
+		expect(line).toContain("TTFT ~ · TPS ~");
+		expect(stripAnsi(renderFooterLine(state, DEFAULT_CONFIG, plainTheme, 160))).not.toContain("TTFT");
+	});
+
+	it("renders response performance after a response starts", () => {
+		const config: AtelierConfig = {
+			...DEFAULT_CONFIG,
+			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
+		};
+		const line = stripAnsi(
+			renderFooterLine(
+				{ ...state, performance: { ttftMs: 820, tokensPerSecond: 42.34, estimated: true } },
+				config,
+				plainTheme,
+				160,
+			),
+		);
+
+		expect(line).toContain("TTFT 820ms · TPS ~42.3");
+	});
+
+	it("keeps performance labels muted and dims each value until it is measured", () => {
+		const config: AtelierConfig = {
+			...DEFAULT_CONFIG,
+			segments: ["activity", "metrics", "performance", "context", "model", "menu"],
+		};
+		const theme = namedTheme("dark");
+
+		const idle = renderFooterLine(state, config, theme, 400);
+		expect(idle).toContain(`${darkRgb.muted}TTFT\u001b[39m ${darkRgb.dim}~\u001b[39m`);
+		expect(idle).toContain(`${darkRgb.muted}TPS\u001b[39m ${darkRgb.dim}~\u001b[39m`);
+
+		const ttftOnly = renderFooterLine({ ...state, performance: { ttftMs: 820 } }, config, theme, 400);
+		expect(ttftOnly).toContain(`${darkRgb.muted}TTFT\u001b[39m ${darkRgb.purple}820ms\u001b[39m`);
+		expect(ttftOnly).toContain(`${darkRgb.muted}TPS\u001b[39m ${darkRgb.dim}~\u001b[39m`);
+
+		const measured = renderFooterLine(
+			{ ...state, performance: { ttftMs: 820, tokensPerSecond: 42.34 } },
+			config,
+			theme,
+			400,
+		);
+		expect(measured).toContain(`${darkRgb.muted}TPS\u001b[39m ${darkRgb.purple}42.3\u001b[39m`);
+	});
+
+	describe("responsive performance", () => {
+		it("drops performance as one item when the footer is narrow", () => {
+			const config: AtelierConfig = {
+				...DEFAULT_CONFIG,
+				segments: ["activity", "metrics", "performance", "context", "model", "menu"],
+			};
+			const line = stripAnsi(
+				renderFooterLine(
+					{ ...state, performance: { ttftMs: 820, tokensPerSecond: 42.34 } },
+					config,
+					plainTheme,
+					56,
+				),
+			);
+
+			expect(line).not.toContain("TTFT");
+		});
+	});
+});
+
 describe("footer", () => {
 	it("selects exact responsive modes", () => {
 		expect([132, 131, 96, 95, 72, 71, 56, 55].map(selectResponsiveMode)).toEqual([

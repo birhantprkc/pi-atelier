@@ -67,6 +67,17 @@ describe("configuration", () => {
 		expect(result.config.preset).toBe("editorial");
 	});
 
+	it("accepts performance as an opt-in footer segment", () => {
+		expect(DEFAULT_CONFIG.segments).not.toContain("performance");
+
+		const result = validateConfig({
+			segments: ["activity", "performance", "metrics", "context"],
+		});
+
+		expect(result.config.segments).toEqual(["activity", "performance", "metrics", "context"]);
+		expect(result.warnings).toEqual([]);
+	});
+
 	it("rejects invalid thresholds, duplicates, and unknown segments", () => {
 		const result = validateConfig({
 			contextWarning: 95,

@@ -161,6 +161,48 @@ describe("menu presentation", () => {
 		expect(h.save).not.toHaveBeenCalled();
 	});
 
+	it("offers performance in the segment toggle and enables it", async () => {
+		rootMenuItems.length = 0;
+		const h = harness();
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => false),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+		};
+		let invocation = 0;
+		let offered: string[] = [];
+		const ctx = {
+			mode: "tui",
+			ui: {
+				notify: vi.fn(),
+				select: vi.fn((title: string, options: string[]) => {
+					if (title !== "Toggle footer segment") return Promise.resolve("Toggle segments");
+					offered = options;
+					return Promise.resolve("○ performance");
+				}),
+				custom: vi.fn(
+					(factory: (...args: any[]) => unknown) =>
+						new Promise((resolve) => {
+							const value = invocation++ === 0 ? "display" : "close";
+							factory(
+								{ requestRender: vi.fn() },
+								{ fg: (_color: string, text: string) => text, bold: (text: string) => text },
+								{},
+								resolve,
+							);
+							resolve(value);
+						}),
+				),
+			},
+		};
+
+		await openAtelierMenu({} as never, ctx as never, h.runtime as never, "/tmp/user.json", sidebar);
+
+		expect(offered).toContain("○ performance");
+		expect(h.runtime.getConfig().segments).toContain("performance");
+	});
+
 	it("shows and toggles collapsed sidebar tool details", async () => {
 		rootMenuItems.length = 0;
 		const sidebar: SidebarControls = {

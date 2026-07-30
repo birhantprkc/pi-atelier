@@ -21,6 +21,7 @@ const segmentIds = new Set<SegmentId>([
 	"brand",
 	"activity",
 	"metrics",
+	"performance",
 	"context",
 	"model",
 	"git",

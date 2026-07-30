@@ -25,7 +25,7 @@ import {
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
 import { AtelierRuntime } from "../src/state.js";
-import type { AtelierState } from "../src/types.js";
+import type { FooterState } from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -180,6 +180,7 @@ export default function atelierExtension(
 	function installFooter(
 		ctx: ExtensionContext,
 		targetRuntime: AtelierRuntime,
+		targetRunActivity: RunActivityTracker | undefined,
 		generation = lifecycleGeneration,
 	): void {
 		if (ctx.mode !== "tui") return;
@@ -190,15 +191,17 @@ export default function atelierExtension(
 			};
 			if (isCurrentFooter()) requestRender = footerRequestRender;
 			return createFooterComponent({
-				getState: (): AtelierState => {
+				getState: (): FooterState => {
 					const state = targetRuntime.getState();
 					const branch = footerData.getGitBranch();
 					if (isCurrentFooter()) {
 						updateExtensionStatuses(Array.from(footerData.getExtensionStatuses().values()));
 					}
+					const performance = targetRunActivity?.getSnapshot().performance;
 					return {
 						...state,
 						...(branch ? { branch } : {}),
+						...(performance ? { performance } : {}),
 						extensionStatuses,
 					};
 				},
@@ -263,7 +266,7 @@ export default function atelierExtension(
 			}
 			if (action === "enable") {
 				enabled = true;
-				if (runtime) installFooter(ctx, runtime);
+				if (runtime) installFooter(ctx, runtime, runActivity);
 				ctx.ui.notify("Pi Atelier enabled", "info");
 				return;
 			}
@@ -418,7 +421,7 @@ export default function atelierExtension(
 				resizeShortcutRegistered = true;
 			}
 			if (enabled && isFresh()) {
-				installFooter(initializationContext, candidateRuntime, initializationGeneration);
+				installFooter(initializationContext, candidateRuntime, localRunActivity, initializationGeneration);
 				localSidebar.show();
 			}
 			void candidateRuntime.refreshWorkspacePulse();
