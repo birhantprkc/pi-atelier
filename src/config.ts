@@ -288,6 +288,7 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 	for (const key of [
 		"showSessionActions",
 		"showSidebarToolNames",
+		"showSidebarAgent",
 		"showSidebarTodos",
 		"completionNotifications",
 	] as const) {
