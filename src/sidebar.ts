@@ -511,19 +511,20 @@ function todosRows(snapshot: SidebarSnapshot, palette: AtelierPalette): string[]
 	const todoList = snapshot.todos;
 	if (todoList.length === 0) return [];
 
-	const done = todoList.filter((t) => t.status === 'completed').length;
+	const done = todoList.filter((t) => t.status === "completed").length;
 	const total = todoList.length;
 	const rows = [palette.paint("muted", `${done}/${total}`)];
 
 	for (const todo of todoList) {
 		let check: string;
-		if (todo.status === 'completed') check = palette.paint("ready", "✓");
-		else if (todo.status === 'in_progress') check = palette.paint("warning", "◐");
+		if (todo.status === "completed") check = palette.paint("ready", "✓");
+		else if (todo.status === "in_progress") check = palette.paint("warning", "◐");
 		else check = palette.paint("dim", "○");
 		const id = palette.paint("accent", `#${todo.id}`);
-		const text = todo.status === 'completed'
-			? palette.paint("dim", sanitize(todo.text))
-			: palette.paint("primary", sanitize(todo.text));
+		const text =
+			todo.status === "completed"
+				? palette.paint("dim", sanitize(todo.text))
+				: palette.paint("primary", sanitize(todo.text));
 		rows.push(`${check} ${id} ${text}`);
 	}
 	return rows;

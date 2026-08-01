@@ -1586,7 +1586,7 @@ describe("sidebar component and overlay", () => {
 		expect(onError).toHaveBeenCalledWith(
 			expect.objectContaining({ message: expect.stringContaining("TUI") }),
 		);
-});
+	});
 });
 
 describe("todos panel", () => {
@@ -1604,7 +1604,6 @@ describe("todos panel", () => {
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			skillsCount: 0,
 			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [
@@ -1630,7 +1629,6 @@ describe("todos panel", () => {
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			skillsCount: 0,
 			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task", status: "pending" }],
@@ -1649,7 +1647,6 @@ describe("todos panel", () => {
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			skillsCount: 0,
 			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task\u001b[31mred", status: "pending" }],

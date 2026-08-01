@@ -17,9 +17,21 @@ export type Density = "comfortable" | "compact";
 /** Legacy menu vocabulary. Ornament is translated to Brand visibility. */
 export type Ornament = "none" | "restrained";
 export type ConfigurationSource = "product" | "user" | "project" | "session";
-export interface TodoItem { id: number; text: string; done: boolean; }
-export interface RpivTask { id: number; subject: string; status: string; }
-export interface NormalizedTodo { id: number; text: string; status: 'pending' | 'in_progress' | 'completed'; }
+export interface TodoItem {
+	id: number;
+	text: string;
+	done: boolean;
+}
+export interface RpivTask {
+	id: number;
+	subject: string;
+	status: string;
+}
+export interface NormalizedTodo {
+	id: number;
+	text: string;
+	status: "pending" | "in_progress" | "completed";
+}
 
 export interface SegmentLayoutEntry {
 	id: SegmentId;
@@ -77,7 +89,6 @@ export interface AtelierConfig extends DisplaySettings {
 	currencyDecimals: number;
 	showSessionActions: boolean;
 	showSidebarToolNames: boolean;
-	showSidebarAgent: boolean;
 	showSidebarTodos: boolean;
 	completionNotifications: boolean;
 }
@@ -141,7 +152,6 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	currencyDecimals: 3,
 	showSessionActions: true,
 	showSidebarToolNames: false,
-	showSidebarAgent: true,
 	showSidebarTodos: true,
 	completionNotifications: true,
 };

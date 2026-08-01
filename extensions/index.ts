@@ -50,6 +50,8 @@ export default function atelierExtension(
 	let unsubscribeAskUserBlocked: (() => void) | undefined;
 	let askUserBlocked = false;
 	let inputRequestSequence = 0;
+	let cachedTodos: NormalizedTodo[] = [];
+	let cachedTodosSessionManager: ExtensionContext["sessionManager"] | undefined;
 	let extensionStatuses: readonly string[] = [];
 	let enabled = true;
 	let shortcutRegistered = false;
@@ -78,16 +80,54 @@ export default function atelierExtension(
 		sidebar?.requestRender();
 	}
 
+	const VALID_TODO_STATUSES = new Set(["pending", "in_progress", "completed"]);
 
+	interface OldTodoDetails {
+		todos: TodoItem[];
+		nextId: number;
+	}
+	interface NewTaskDetails {
+		tasks: RpivTask[];
+		nextId: number;
+	}
 
-	interface OldTodoDetails { todos: TodoItem[]; nextId: number; }
-	interface NewTaskDetails { tasks: RpivTask[]; nextId: number; }
+	function isOldTodoDetails(details: unknown): details is OldTodoDetails {
+		if (typeof details !== "object" || details === null) return false;
+		if (!("todos" in details)) return false;
+		const todos = (details as OldTodoDetails).todos;
+		if (!Array.isArray(todos)) return false;
+		return todos.every(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				typeof (item as TodoItem).id === "number" &&
+				typeof (item as TodoItem).text === "string" &&
+				typeof (item as TodoItem).done === "boolean",
+		);
+	}
 
-	function normalizeTodo(item: TodoItem | RpivTask): NormalizedTodo {
-		if ('done' in item) {
-			return { id: item.id, text: item.text, status: item.done ? 'completed' : 'pending' };
+	function isNewTaskDetails(details: unknown): details is NewTaskDetails {
+		if (typeof details !== "object" || details === null) return false;
+		if (!("tasks" in details)) return false;
+		const tasks = (details as NewTaskDetails).tasks;
+		if (!Array.isArray(tasks)) return false;
+		return tasks.every(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				typeof (item as RpivTask).id === "number" &&
+				typeof (item as RpivTask).subject === "string" &&
+				typeof (item as RpivTask).status === "string",
+		);
+	}
+
+	function normalizeTodo(item: TodoItem | RpivTask): NormalizedTodo | undefined {
+		if ("done" in item) {
+			return { id: item.id, text: item.text, status: item.done ? "completed" : "pending" };
 		}
-		return { id: item.id, text: item.subject, status: item.status as 'pending' | 'in_progress' | 'completed' };
+		const status = item.status;
+		if (!VALID_TODO_STATUSES.has(status)) return undefined;
+		return { id: item.id, text: item.subject, status: status as NormalizedTodo["status"] };
 	}
 
 	function reconstructTodos(ctx: ExtensionContext): NormalizedTodo[] {
@@ -96,11 +136,11 @@ export default function atelierExtension(
 			if (entry.type !== "message") continue;
 			const msg = entry.message;
 			if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
-			const details = msg.details as OldTodoDetails | NewTaskDetails | undefined;
-			if (details && 'todos' in details) allItems = details.todos;
-			if (details && 'tasks' in details) allItems = details.tasks;
+			const details = msg.details;
+			if (isOldTodoDetails(details)) allItems = details.todos;
+			else if (isNewTaskDetails(details)) allItems = details.tasks;
 		}
-		return allItems.map(normalizeTodo);
+		return allItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
 	}
 	function getSidebarSnapshot(
 		ctx: ExtensionContext,
@@ -121,7 +161,7 @@ export default function atelierExtension(
 			activeToolNames: activeTools,
 			extensionStatuses,
 			...(targetRunActivity ? { runActivity: targetRunActivity.getSnapshot() } : {}),
-			todos: reconstructTodos(ctx),
+			todos: cachedTodos,
 		});
 	}
 
@@ -439,6 +479,8 @@ export default function atelierExtension(
 			completionNotifier = candidateCompletionNotifier;
 			currentContext = initializationContext;
 			currentSessionManager = initializationContext.sessionManager;
+			cachedTodosSessionManager = initializationContext.sessionManager;
+			cachedTodos = reconstructTodos(initializationContext);
 			askUserBlocked = false;
 			inputRequestSequence = 0;
 			unsubscribeAskUserBlocked = pi.events.on("rpiv:ask-user:blocked", (data) => {
@@ -577,11 +619,22 @@ export default function atelierExtension(
 		if (!current.runtime.getConfig().showSidebarTodos) return;
 		if (!sidebar?.isVisible()) return;
 
-		const details = event.details as OldTodoDetails | NewTaskDetails | undefined;
-		let todoList: NormalizedTodo[] = [];
-		if (details && 'todos' in details) todoList = details.todos.map(normalizeTodo);
-		if (details && 'tasks' in details) todoList = details.tasks.map(normalizeTodo);
-		const done = todoList.filter((t) => t.status === 'completed').length;
+		const details = event.details;
+		let rawItems: (TodoItem | RpivTask)[];
+		if (isOldTodoDetails(details)) {
+			rawItems = details.todos;
+		} else if (isNewTaskDetails(details)) {
+			rawItems = details.tasks;
+		} else {
+			return;
+		}
+		const todoList = rawItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
+		if (todoList.length === 0) return;
+		// Update the cached todo list for sidebar rendering
+		if (ctx.sessionManager === cachedTodosSessionManager) {
+			cachedTodos = todoList;
+		}
+		const done = todoList.filter((t) => t.status === "completed").length;
 		sidebar?.requestRender();
 		return {
 			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
@@ -627,6 +680,8 @@ export default function atelierExtension(
 		askUserBlocked = false;
 		current?.ctx.ui.setFooter(undefined);
 		currentContext = undefined;
+		cachedTodos = [];
+		cachedTodosSessionManager = undefined;
 		currentSessionManager = undefined;
 		requestRender = () => undefined;
 		extensionStatuses = [];
