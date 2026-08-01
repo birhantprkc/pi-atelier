@@ -123,7 +123,13 @@ describe("Control Center presentation", () => {
 	it.each([
 		[
 			"settings",
-			["Display: editorial", "Completion notifications: On", "Sidebar tool list: Collapsed", "Back"],
+			[
+				"Display: editorial",
+				"Completion notifications: On",
+				"Sidebar tool list: Collapsed",
+				"Agent panel: On",
+				"Back",
+			],
 		],
 		["actions", ["Session details", "Rename session", "Compact session", "Back"]],
 	] as const)("routes the %s root category to its destination", async (category, expectedLabels) => {
@@ -197,6 +203,57 @@ describe("Control Center presentation", () => {
 	it("frames every content row with heavy vertical borders and corners", () => {
 		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
 		expect(renderMenuFrame(theme, ["Hi"], 8)).toEqual(["┏━━━━━━┓", "┃Hi    ┃", "┗━━━━━━┛"]);
+	});
+
+	it("persists showSidebarAgent toggle and notifies on success", async () => {
+		rootMenuItems.length = 0;
+		const h = harness();
+		const ctx = contextWithSelections(["settings", "sidebar-agent", "back", "close"]);
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+			requestRender: vi.fn(),
+		};
+		await openAtelierControlCenter(
+			{} as never,
+			ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			sidebar,
+			() => undefined,
+			h.savePatch,
+		);
+		expect(h.runtime.getConfig().showSidebarAgent).toBe(false);
+		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { showSidebarAgent: false });
+		expect(ctx.ui.notify).toHaveBeenCalledWith("Agent panel disabled", "info");
+		expect(sidebar.requestRender).toHaveBeenCalledOnce();
+	});
+
+	it("reports warning when showSidebarAgent save fails", async () => {
+		rootMenuItems.length = 0;
+		const h = harness();
+		h.savePatch.mockRejectedValueOnce(new Error("disk full"));
+		const ctx = contextWithSelections(["settings", "sidebar-agent", "back", "close"]);
+		const sidebar: SidebarControls = {
+			isVisible: vi.fn(() => true),
+			toggle: vi.fn(),
+			isToolListExpanded: vi.fn(() => false),
+			toggleToolList: vi.fn().mockResolvedValue(undefined),
+			requestRender: vi.fn(),
+		};
+		await openAtelierControlCenter(
+			{} as never,
+			ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			sidebar,
+			() => undefined,
+			h.savePatch,
+		);
+		expect(h.runtime.getConfig().showSidebarAgent).toBe(false);
+		expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("could not be saved"), "warning");
 	});
 });
 

@@ -32,6 +32,7 @@ describe("configuration", () => {
 		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
+		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
 	});
 
 	it("applies named templates atomically before same-layer deviations", () => {
@@ -171,6 +172,18 @@ describe("configuration", () => {
 		expect(result.warnings).toEqual(
 			expect.arrayContaining([expect.stringContaining("threshold"), "showSidebarToolNames must be boolean"]),
 		);
+	});
+
+	it("loads persisted showSidebarAgent false from user config", async () => {
+		await writeJson(userPath, { showSidebarAgent: false });
+		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
+		expect(result.config.showSidebarAgent).toBe(false);
+	});
+
+	it("rejects non-boolean showSidebarAgent with warning", () => {
+		const result = validateConfig({ showSidebarAgent: "off" });
+		expect(result.config.showSidebarAgent).toBe(true);
+		expect(result.warnings).toContain("showSidebarAgent must be boolean");
 	});
 
 	it("reports malformed JSON once and retains defaults", async () => {

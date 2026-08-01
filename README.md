@@ -104,7 +104,7 @@ Open Pi Atelier with:
 
 The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Settings** — the Display Settings Workspace, completion notifications, and the persisted sidebar tool-list preference
+- **Settings** — the Display Settings Workspace, completion notifications, sidebar tool-list expansion, and Agent panel visibility
 - **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
 - **Actions** — session details, rename, and safe compaction
 
@@ -136,6 +136,8 @@ The sidebar starts shown whenever the extension initializes. An explicit `off` a
 ```
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
+
+The Agent panel at the top of the sidebar can be hidden independently through **Settings → Agent panel** in the Control Center. The panel is shown by default; toggling it off saves immediately to user configuration and removes the agent state and model metadata from the sidebar.
 
 The scan-first hierarchy leads with agent state and model, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
 
@@ -202,6 +204,7 @@ Complete example:
   "currencyDecimals": 3,
   "showSessionActions": true,
   "showSidebarToolNames": false,
+  "showSidebarAgent": true,
   "showSidebarTodos": true,
   "completionNotifications": true
 }
@@ -214,6 +217,8 @@ Product defaults are layered with **User default**, trusted **Project override**
 Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
+
+`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. When set to `false`, the sidebar still shows but omits the agent state and model metadata section. The preference can also be toggled through **Settings → Agent panel** in the Control Center and saves immediately.
 
 `showSidebarTodos` (default `true`) controls whether the sidebar displays the TODOS panel. Set to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
 

@@ -805,15 +805,22 @@ export function renderSidebarLines(
 					},
 				]
 			: []),
-		{
-			name: "agent",
-			panel: "AGENT",
-			panelRole: activityRole(snapshot.activity),
-			panelJewel: snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦",
-			rows: agentRows(snapshot, layout, panelContentWidth, palette, theme),
-			required: true,
-			dropRank: Number.POSITIVE_INFINITY,
-		},
+		...(config.showSidebarAgent
+			? [
+					{
+						name: "agent",
+						panel: "AGENT",
+						panelRole: activityRole(snapshot.activity),
+						panelJewel:
+							snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1
+								? ("✧" as const)
+								: ("✦" as const),
+						rows: agentRows(snapshot, layout, panelContentWidth, palette, theme),
+						required: true,
+						dropRank: Number.POSITIVE_INFINITY,
+					},
+				]
+			: []),
 		...activitySidebarGroups(snapshot, panelContentWidth, palette, now).map((group) => ({
 			...group,
 			required: group.name === "activityCore",

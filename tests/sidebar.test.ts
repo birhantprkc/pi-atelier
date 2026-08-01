@@ -1134,6 +1134,20 @@ describe("sidebar snapshot and layout", () => {
 		);
 		expect(fg).toHaveBeenCalledWith(expectedRole, expect.stringContaining(`${percent.toFixed(1)}%`));
 	});
+
+	it("hides the Agent panel when showSidebarAgent is false", () => {
+		const configWithoutAgent = { ...DEFAULT_CONFIG, showSidebarAgent: false };
+		const rows = contentRows(renderSidebarLines(snapshot(), configWithoutAgent, theme, 44, 36, false, 0));
+		expect(rows).not.toContain("AGENT");
+		expect(rows).toContain("CONTEXT");
+		expect(rows).toContain("WORKSPACE");
+	});
+
+	it("shows the Agent panel when showSidebarAgent is true", () => {
+		const configWithAgent = { ...DEFAULT_CONFIG, showSidebarAgent: true };
+		const rows = contentRows(renderSidebarLines(snapshot(), configWithAgent, theme, 44, 36, false, 0));
+		expect(rows).toContain("AGENT");
+	});
 });
 
 describe("sidebar component and overlay", () => {
