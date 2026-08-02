@@ -135,7 +135,7 @@ export default function atelierExtension(
 		for (const entry of ctx.sessionManager.getBranch()) {
 			if (entry.type !== "message") continue;
 			const msg = entry.message;
-			if (msg.role !== "toolResult" || msg.toolName !== "todo") continue;
+			if (msg.role !== "toolResult" || msg.toolName !== "todo" || msg.isError) continue;
 			const details = msg.details;
 			if (isOldTodoDetails(details)) allItems = details.todos;
 			else if (isNewTaskDetails(details)) allItems = details.tasks;
@@ -574,6 +574,14 @@ export default function atelierExtension(
 		}
 	});
 
+	pi.on("session_tree", (_event, ctx) => {
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime) return;
+		cachedTodosSessionManager = ctx.sessionManager;
+		cachedTodos = reconstructTodos(ctx);
+		requestAllRenders();
+	});
+
 	pi.on("agent_start", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity || !current.runtime) return;
@@ -616,8 +624,7 @@ export default function atelierExtension(
 		if (event.toolName !== "todo") return;
 		const current = getCurrentContextState(ctx);
 		if (!current?.runtime) return;
-		if (!current.runtime.getConfig().showSidebarTodos) return;
-		if (!sidebar?.isVisible()) return;
+		if (event.isError) return;
 
 		const details = event.details;
 		let rawItems: (TodoItem | RpivTask)[];
@@ -629,13 +636,12 @@ export default function atelierExtension(
 			return;
 		}
 		const todoList = rawItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
-		if (todoList.length === 0) return;
-		// Update the cached todo list for sidebar rendering
-		if (ctx.sessionManager === cachedTodosSessionManager) {
-			cachedTodos = todoList;
-		}
+		// Keep state updates independent from whether the TODO panel is currently presented.
+		if (ctx.sessionManager === cachedTodosSessionManager) cachedTodos = todoList;
+		const sidebarVisible = current.sidebar?.isVisible() ?? false;
+		if (sidebarVisible) current.sidebar?.requestRender();
+		if (!current.runtime.getConfig().showSidebarTodos || !sidebarVisible || todoList.length === 0) return;
 		const done = todoList.filter((t) => t.status === "completed").length;
-		sidebar?.requestRender();
 		return {
 			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
 		};
