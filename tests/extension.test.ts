@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import atelierExtension from "../extensions/index.js";
 
@@ -171,6 +174,23 @@ async function start(h: ReturnType<typeof harness>, ctx = h.ctx) {
 
 async function command(h: ReturnType<typeof harness>, args: string, ctx = h.ctx) {
 	await h.commands.get("atelier").handler(args, ctx);
+}
+
+async function withPersistedUserConfig(
+	config: Record<string, unknown>,
+	run: () => Promise<void>,
+): Promise<void> {
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	const agentDir = await mkdtemp(join(tmpdir(), "pi-atelier-extension-"));
+	try {
+		await writeFile(join(agentDir, "pi-atelier.json"), JSON.stringify(config), "utf8");
+		process.env.PI_CODING_AGENT_DIR = agentDir;
+		await run();
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		await rm(agentDir, { recursive: true, force: true });
+	}
 }
 
 describe("extension registration", () => {
@@ -961,5 +981,487 @@ describe("extension registration", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+});
+describe("tool_result handler for todos", () => {
+	it("collapses old format todos when sidebar is visible", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+
+		const event = {
+			toolName: "todo",
+			details: {
+				todos: [
+					{ id: 1, text: "Done task", done: true },
+					{ id: 2, text: "Pending task", done: false },
+				],
+				nextId: 3,
+			},
+		};
+		const result = await toolResultHandler!(event, h.ctx);
+		expect(result).toEqual({
+			content: [{ type: "text", text: "1/2 done · see sidebar" }],
+		});
+	});
+
+	it("collapses new format tasks when sidebar is visible", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+
+		const event = {
+			toolName: "todo",
+			details: {
+				tasks: [
+					{ id: 1, subject: "Done", status: "completed" },
+					{ id: 2, subject: "Working", status: "in_progress" },
+					{ id: 3, subject: "Pending", status: "pending" },
+				],
+				nextId: 4,
+			},
+		};
+		const result = await toolResultHandler!(event, h.ctx);
+		expect(result).toEqual({
+			content: [{ type: "text", text: "1/3 done · see sidebar" }],
+		});
+	});
+
+	it("preserves cached todos for error and malformed results", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Initial task", done: false }], nextId: 2 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		const errorResult = await toolResultHandler!(
+			{
+				toolName: "todo",
+				isError: true,
+				details: { todos: [{ id: 2, text: "Failed task", done: false }], nextId: 3 },
+			},
+			h.ctx,
+		);
+		expect(errorResult).toBeUndefined();
+
+		const malformedResult = await toolResultHandler!(
+			{ toolName: "todo", isError: false, details: { todos: "not an array", nextId: 1 } },
+			h.ctx,
+		);
+		expect(malformedResult).toBeUndefined();
+
+		await command(h, "sidebar off");
+		await command(h, "sidebar on");
+		expect(h.overlays.at(-1)).toBeDefined();
+		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
+		expect(sidebarText).toContain("Initial task");
+		expect(sidebarText).not.toContain("Failed task");
+	});
+
+	it("does not collapse tasks with unknown statuses", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+
+		// All tasks have unknown/deleted status
+		const badEvent = {
+			toolName: "todo",
+			details: {
+				tasks: [{ id: 1, subject: "Deleted", status: "deleted" }],
+				nextId: 2,
+			},
+		};
+		const result = await toolResultHandler!(badEvent, h.ctx);
+		expect(result).toBeUndefined();
+	});
+
+	it("ignores non-todo tool results", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+
+		const event = { toolName: "read", details: {} };
+		const result = await toolResultHandler!(event, h.ctx);
+		expect(result).toBeUndefined();
+	});
+
+	it("does not collapse when persisted showSidebarTodos is false", async () => {
+		await withPersistedUserConfig({ showSidebarTodos: false }, async () => {
+			const h = harness();
+			await start(h);
+			await command(h, "sidebar on");
+
+			expect(h.overlays[0]).toBeDefined();
+			const sidebarText = h.overlays[0]!.component.render(44).join("\n");
+			expect(sidebarText).not.toContain("TODOS");
+
+			const toolResultHandler = h.handlers.get("tool_result");
+			expect(toolResultHandler).toBeDefined();
+			const result = await toolResultHandler!(
+				{
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Task", done: false }], nextId: 2 },
+				},
+				h.ctx,
+			);
+			expect(result).toBeUndefined();
+		});
+	});
+});
+describe("sidebar todos integration", () => {
+	it("shows TODOS panel reconstructed from old format branch entries", async () => {
+		const h = harness();
+		// Seed branch with old-format todo tool result
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						todos: [
+							{ id: 1, text: "Completed task", done: true },
+							{ id: 2, text: "Pending task", done: false },
+						],
+						nextId: 3,
+					},
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("TODOS");
+		expect(sidebarText).toContain("1/2");
+		expect(sidebarText).toContain("Completed task");
+		expect(sidebarText).toContain("Pending task");
+	});
+
+	it("skips error TODO results during branch reconstruction", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					isError: false,
+					details: { todos: [{ id: 1, text: "Successful task", done: false }], nextId: 2 },
+				},
+			},
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					isError: true,
+					details: { todos: [{ id: 2, text: "Failed task", done: false }], nextId: 3 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		expect(h.overlays[0]).toBeDefined();
+		const sidebarText = h.overlays[0]!.component.render(44).join("\n");
+		expect(sidebarText).toContain("Successful task");
+		expect(sidebarText).not.toContain("Failed task");
+	});
+
+	it("shows TODOS panel reconstructed from new format branch entries", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						tasks: [
+							{ id: 1, subject: "Done", status: "completed" },
+							{ id: 2, subject: "Working", status: "in_progress" },
+							{ id: 3, subject: "Pending", status: "pending" },
+						],
+						nextId: 4,
+					},
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("TODOS");
+		expect(sidebarText).toContain("1/3");
+		expect(sidebarText).toContain("Done");
+		expect(sidebarText).toContain("Working");
+		expect(sidebarText).toContain("Pending");
+	});
+
+	it("reconstructs and clears cached todos when the active branch changes", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "First branch task", done: false }], nextId: 2 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+		expect(h.overlays[0]).toBeDefined();
+		const sidebarOverlay = h.overlays[0]!;
+		expect(sidebarOverlay.component.render(44).join("\n")).toContain("First branch task");
+
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { tasks: [{ id: 2, subject: "Second branch task", status: "pending" }], nextId: 3 },
+				},
+			},
+		]);
+		const sessionTreeHandler = h.handlers.get("session_tree");
+		expect(sessionTreeHandler).toBeDefined();
+		const previousRenderCount = sidebarOverlay.requestRender.mock.calls.length;
+		await sessionTreeHandler!({ type: "session_tree", newLeafId: "second", oldLeafId: "first" }, h.ctx);
+		expect(sidebarOverlay.requestRender.mock.calls.length).toBeGreaterThan(previousRenderCount);
+		let sidebarText = sidebarOverlay.component.render(44).join("\n");
+		expect(sidebarText).toContain("Second branch task");
+		expect(sidebarText).not.toContain("First branch task");
+
+		h.ctx.sessionManager.getBranch.mockReturnValue([]);
+		await sessionTreeHandler!({ type: "session_tree", newLeafId: null, oldLeafId: "second" }, h.ctx);
+		sidebarText = sidebarOverlay.component.render(44).join("\n");
+		expect(sidebarText).not.toContain("Second branch task");
+		expect(sidebarText).not.toContain("TODOS");
+	});
+
+	it("filters out tasks with unknown statuses from sidebar", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						tasks: [
+							{ id: 1, subject: "Valid", status: "pending" },
+							{ id: 2, subject: "Deleted", status: "deleted" },
+							{ id: 3, subject: "Unknown", status: "foobar" },
+						],
+						nextId: 4,
+					},
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("TODOS");
+		expect(sidebarText).toContain("0/1");
+		expect(sidebarText).toContain("Valid");
+		expect(sidebarText).not.toContain("Deleted");
+		expect(sidebarText).not.toContain("Unknown");
+	});
+
+	it("updates sidebar todos after tool_result event", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: {
+						todos: [{ id: 1, text: "Initial task", done: false }],
+						nextId: 2,
+					},
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		let sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("0/1");
+		expect(sidebarText).toContain("Initial task");
+
+		// Trigger new todo result
+		const toolResultHandler = h.handlers.get("tool_result");
+		await toolResultHandler!(
+			{
+				toolName: "todo",
+				details: {
+					todos: [
+						{ id: 1, text: "Initial task", done: true },
+						{ id: 2, text: "New task", done: false },
+					],
+					nextId: 3,
+				},
+			},
+			h.ctx,
+		);
+
+		sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("1/2");
+		expect(sidebarText).toContain("Initial task");
+		expect(sidebarText).toContain("New task");
+	});
+
+	it("updates cached todos while the sidebar is hidden", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Initial task", done: false }], nextId: 2 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar off");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		const result = await toolResultHandler!(
+			{
+				toolName: "todo",
+				details: { todos: [{ id: 2, text: "Hidden update", done: false }], nextId: 3 },
+			},
+			h.ctx,
+		);
+		expect(result).toBeUndefined();
+
+		await command(h, "sidebar on");
+		expect(h.overlays.at(-1)).toBeDefined();
+		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
+		expect(sidebarText).toContain("Hidden update");
+		expect(sidebarText).not.toContain("Initial task");
+	});
+
+	it("clears cached todos when a valid empty list arrives", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Stale task", done: false }], nextId: 2 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		const result = await toolResultHandler!({ toolName: "todo", details: { todos: [], nextId: 1 } }, h.ctx);
+		expect(result).toBeUndefined();
+
+		await command(h, "sidebar off");
+		await command(h, "sidebar on");
+		expect(h.overlays.at(-1)).toBeDefined();
+		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
+		expect(sidebarText).not.toContain("Stale task");
+		expect(sidebarText).not.toContain("TODOS");
+	});
+
+	it("clears cached todos when all task statuses are filtered out", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			{
+				type: "message",
+				message: {
+					role: "toolResult",
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Stale task", done: false }], nextId: 2 },
+				},
+			},
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		const toolResultHandler = h.handlers.get("tool_result");
+		expect(toolResultHandler).toBeDefined();
+		const result = await toolResultHandler!(
+			{
+				toolName: "todo",
+				details: { tasks: [{ id: 2, subject: "Deleted task", status: "deleted" }], nextId: 3 },
+			},
+			h.ctx,
+		);
+		expect(result).toBeUndefined();
+
+		await command(h, "sidebar off");
+		await command(h, "sidebar on");
+		expect(h.overlays.at(-1)).toBeDefined();
+		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
+		expect(sidebarText).not.toContain("Stale task");
+		expect(sidebarText).not.toContain("TODOS");
+	});
+
+	it("hides TODOS panel and preserves full output when persisted showSidebarTodos is false", async () => {
+		await withPersistedUserConfig({ showSidebarTodos: false }, async () => {
+			const h = harness();
+			h.ctx.sessionManager.getBranch.mockReturnValue([
+				{
+					type: "message",
+					message: {
+						role: "toolResult",
+						toolName: "todo",
+						details: { todos: [{ id: 1, text: "Task", done: false }], nextId: 2 },
+					},
+				},
+			]);
+			await start(h);
+			await command(h, "sidebar on");
+
+			expect(h.overlays[0]).toBeDefined();
+			const sidebarText = h.overlays[0]!.component.render(44).join("\n");
+			expect(sidebarText).not.toContain("TODOS");
+
+			const toolResultHandler = h.handlers.get("tool_result");
+			expect(toolResultHandler).toBeDefined();
+			const result = await toolResultHandler!(
+				{
+					toolName: "todo",
+					details: { todos: [{ id: 1, text: "Task", done: false }], nextId: 2 },
+				},
+				h.ctx,
+			);
+			expect(result).toBeUndefined();
+		});
 	});
 });

@@ -25,7 +25,7 @@ import {
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
 import { AtelierRuntime } from "../src/state.js";
-import type { FooterState } from "../src/types.js";
+import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -50,6 +50,8 @@ export default function atelierExtension(
 	let unsubscribeAskUserBlocked: (() => void) | undefined;
 	let askUserBlocked = false;
 	let inputRequestSequence = 0;
+	let cachedTodos: NormalizedTodo[] = [];
+	let cachedTodosSessionManager: ExtensionContext["sessionManager"] | undefined;
 	let extensionStatuses: readonly string[] = [];
 	let enabled = true;
 	let shortcutRegistered = false;
@@ -78,6 +80,68 @@ export default function atelierExtension(
 		sidebar?.requestRender();
 	}
 
+	const VALID_TODO_STATUSES = new Set(["pending", "in_progress", "completed"]);
+
+	interface OldTodoDetails {
+		todos: TodoItem[];
+		nextId: number;
+	}
+	interface NewTaskDetails {
+		tasks: RpivTask[];
+		nextId: number;
+	}
+
+	function isOldTodoDetails(details: unknown): details is OldTodoDetails {
+		if (typeof details !== "object" || details === null) return false;
+		if (!("todos" in details)) return false;
+		const todos = (details as OldTodoDetails).todos;
+		if (!Array.isArray(todos)) return false;
+		return todos.every(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				typeof (item as TodoItem).id === "number" &&
+				typeof (item as TodoItem).text === "string" &&
+				typeof (item as TodoItem).done === "boolean",
+		);
+	}
+
+	function isNewTaskDetails(details: unknown): details is NewTaskDetails {
+		if (typeof details !== "object" || details === null) return false;
+		if (!("tasks" in details)) return false;
+		const tasks = (details as NewTaskDetails).tasks;
+		if (!Array.isArray(tasks)) return false;
+		return tasks.every(
+			(item) =>
+				typeof item === "object" &&
+				item !== null &&
+				typeof (item as RpivTask).id === "number" &&
+				typeof (item as RpivTask).subject === "string" &&
+				typeof (item as RpivTask).status === "string",
+		);
+	}
+
+	function normalizeTodo(item: TodoItem | RpivTask): NormalizedTodo | undefined {
+		if ("done" in item) {
+			return { id: item.id, text: item.text, status: item.done ? "completed" : "pending" };
+		}
+		const status = item.status;
+		if (!VALID_TODO_STATUSES.has(status)) return undefined;
+		return { id: item.id, text: item.subject, status: status as NormalizedTodo["status"] };
+	}
+
+	function reconstructTodos(ctx: ExtensionContext): NormalizedTodo[] {
+		let allItems: (TodoItem | RpivTask)[] = [];
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "message") continue;
+			const msg = entry.message;
+			if (msg.role !== "toolResult" || msg.toolName !== "todo" || msg.isError) continue;
+			const details = msg.details;
+			if (isOldTodoDetails(details)) allItems = details.todos;
+			else if (isNewTaskDetails(details)) allItems = details.tasks;
+		}
+		return allItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
+	}
 	function getSidebarSnapshot(
 		ctx: ExtensionContext,
 		targetRuntime: AtelierRuntime,
@@ -97,6 +161,7 @@ export default function atelierExtension(
 			activeToolNames: activeTools,
 			extensionStatuses,
 			...(targetRunActivity ? { runActivity: targetRunActivity.getSnapshot() } : {}),
+			todos: cachedTodos,
 		});
 	}
 
@@ -414,6 +479,8 @@ export default function atelierExtension(
 			completionNotifier = candidateCompletionNotifier;
 			currentContext = initializationContext;
 			currentSessionManager = initializationContext.sessionManager;
+			cachedTodosSessionManager = initializationContext.sessionManager;
+			cachedTodos = reconstructTodos(initializationContext);
 			askUserBlocked = false;
 			inputRequestSequence = 0;
 			unsubscribeAskUserBlocked = pi.events.on("rpiv:ask-user:blocked", (data) => {
@@ -507,6 +574,14 @@ export default function atelierExtension(
 		}
 	});
 
+	pi.on("session_tree", (_event, ctx) => {
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime) return;
+		cachedTodosSessionManager = ctx.sessionManager;
+		cachedTodos = reconstructTodos(ctx);
+		requestAllRenders();
+	});
+
 	pi.on("agent_start", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
 		if (!current?.runActivity || !current.runtime) return;
@@ -543,6 +618,33 @@ export default function atelierExtension(
 		if (!current?.runActivity) return;
 		current.runActivity.finishTool(event);
 		current.runtime?.scheduleWorkspacePulseRefresh();
+	});
+	// Collapse todo tool output when sidebar shows todos
+	pi.on("tool_result", (event, ctx) => {
+		if (event.toolName !== "todo") return;
+		const current = getCurrentContextState(ctx);
+		if (!current?.runtime) return;
+		if (event.isError) return;
+
+		const details = event.details;
+		let rawItems: (TodoItem | RpivTask)[];
+		if (isOldTodoDetails(details)) {
+			rawItems = details.todos;
+		} else if (isNewTaskDetails(details)) {
+			rawItems = details.tasks;
+		} else {
+			return;
+		}
+		const todoList = rawItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
+		// Keep state updates independent from whether the TODO panel is currently presented.
+		if (ctx.sessionManager === cachedTodosSessionManager) cachedTodos = todoList;
+		const sidebarVisible = current.sidebar?.isVisible() ?? false;
+		if (sidebarVisible) current.sidebar?.requestRender();
+		if (!current.runtime.getConfig().showSidebarTodos || !sidebarVisible || todoList.length === 0) return;
+		const done = todoList.filter((t) => t.status === "completed").length;
+		return {
+			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
+		};
 	});
 	pi.on("agent_settled", (_event, ctx) => {
 		const current = getCurrentContextState(ctx);
@@ -584,6 +686,8 @@ export default function atelierExtension(
 		askUserBlocked = false;
 		current?.ctx.ui.setFooter(undefined);
 		currentContext = undefined;
+		cachedTodos = [];
+		cachedTodosSessionManager = undefined;
 		currentSessionManager = undefined;
 		requestRender = () => undefined;
 		extensionStatuses = [];

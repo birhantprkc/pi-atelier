@@ -193,6 +193,7 @@ Complete example:
   "currencyDecimals": 3,
   "showSessionActions": true,
   "showSidebarToolNames": false,
+  "showSidebarTodos": true,
   "completionNotifications": true
 }
 ```
@@ -204,6 +205,8 @@ Product defaults are layered with **User default**, trusted **Project override**
 Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
+
+`showSidebarTodos` (default `true`) controls whether the sidebar displays a TODOS panel with the current task list from `todo` tool invocations. When enabled, the sidebar shows task progress (`done/total`), individual task status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs. When the sidebar is visible and this setting is enabled, the full todo tool output in the main workspace is collapsed to a summary line that directs attention to the sidebar. Malformed or error results from the todo tool are never collapsed, preserving visibility of failure information. Unknown or deleted task statuses are filtered out rather than rendered as pending. Set to `false` to disable the todos panel and show complete todo output in the workspace.
 
 ## Presets
 
