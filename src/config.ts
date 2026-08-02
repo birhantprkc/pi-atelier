@@ -360,10 +360,11 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
 	Object.assign(config, resolved.display);
-	// Completion notifications are intentionally global-user-only.
+	// Completion notifications and Agent visibility are intentionally global-user-only.
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(user.value, global, []);
 	config.completionNotifications = global.completionNotifications;
+	config.showSidebarAgent = global.showSidebarAgent;
 	return {
 		config,
 		warnings: [

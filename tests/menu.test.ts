@@ -214,7 +214,6 @@ describe("Control Center presentation", () => {
 			toggle: vi.fn(),
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
-			requestRender: vi.fn(),
 		};
 		await openAtelierControlCenter(
 			{} as never,
@@ -228,7 +227,6 @@ describe("Control Center presentation", () => {
 		expect(h.runtime.getConfig().showSidebarAgent).toBe(false);
 		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { showSidebarAgent: false });
 		expect(ctx.ui.notify).toHaveBeenCalledWith("Agent panel disabled", "info");
-		expect(sidebar.requestRender).toHaveBeenCalledOnce();
 	});
 
 	it("reports warning when showSidebarAgent save fails", async () => {
@@ -241,7 +239,6 @@ describe("Control Center presentation", () => {
 			toggle: vi.fn(),
 			isToolListExpanded: vi.fn(() => false),
 			toggleToolList: vi.fn().mockResolvedValue(undefined),
-			requestRender: vi.fn(),
 		};
 		await openAtelierControlCenter(
 			{} as never,

@@ -1432,6 +1432,45 @@ describe("sidebar todos integration", () => {
 		expect(sidebarText).not.toContain("TODOS");
 	});
 
+	it("persists hidden Agent independently from populated TODOS across session reload", async () => {
+		await withPersistedUserConfig({ showSidebarAgent: false }, async () => {
+			const h = harness();
+			h.ctx.sessionManager.getBranch.mockReturnValue([
+				{
+					type: "message",
+					message: {
+						role: "toolResult",
+						toolName: "todo",
+						details: {
+							todos: [
+								{ id: 1, text: "Visible TODO", done: false },
+								{ id: 2, text: "Completed TODO", done: true },
+							],
+							nextId: 3,
+						},
+					},
+				},
+			]);
+
+			await start(h);
+			expect(h.overlays[0]).toBeDefined();
+			const initialSidebar = h.overlays[0]!.component.render(44).join("\n");
+			expect(initialSidebar).not.toContain("AGENT");
+			expect(initialSidebar).toContain("TODOS");
+			expect(initialSidebar).toContain("1/2");
+			expect(initialSidebar).toContain("Visible TODO");
+
+			await start(h, replacementContext(h.ctx, "Reloaded session"));
+			expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
+			expect(h.overlays[1]).toBeDefined();
+			const reloadedSidebar = h.overlays[1]!.component.render(44).join("\n");
+			expect(reloadedSidebar).not.toContain("AGENT");
+			expect(reloadedSidebar).toContain("TODOS");
+			expect(reloadedSidebar).toContain("1/2");
+			expect(reloadedSidebar).toContain("Visible TODO");
+		});
+	});
+
 	it("hides TODOS panel and preserves full output when persisted showSidebarTodos is false", async () => {
 		await withPersistedUserConfig({ showSidebarTodos: false }, async () => {
 			const h = harness();

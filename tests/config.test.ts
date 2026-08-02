@@ -86,6 +86,29 @@ describe("configuration", () => {
 		expect(result.config.completionNotifications).toBe(false);
 	});
 
+	it("lets a user Agent visibility preference win over trusted project and session values", async () => {
+		await writeJson(userPath, { showSidebarAgent: false });
+		await writeJson(projectPath, { showSidebarAgent: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarAgent: true },
+		});
+		expect(result.config.showSidebarAgent).toBe(false);
+	});
+
+	it("ignores project and session Agent visibility when the user omits it", async () => {
+		await writeJson(projectPath, { showSidebarAgent: false });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarAgent: false },
+		});
+		expect(result.config.showSidebarAgent).toBe(true);
+	});
+
 	it("does not read, warn about, or attribute an untrusted project", async () => {
 		await writeFile(projectPath, "{broken", "utf8");
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });

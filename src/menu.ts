@@ -27,7 +27,6 @@ export interface SidebarControls {
 	toggle(): void;
 	isToolListExpanded(): boolean;
 	toggleToolList(): Promise<void>;
-	requestRender?(): void;
 }
 
 interface MenuTheme {
@@ -399,7 +398,6 @@ export async function openAtelierControlCenter(
 							"warning",
 						);
 					}
-					sidebar.requestRender?.();
 				} else await sidebar.toggleToolList();
 			}
 		} else if (category === "controls") {
