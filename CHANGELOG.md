@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a TODOS sidebar panel for legacy Pi `todo` details and the optional `@juicesharp/rpiv-todo` task format, without installing or requiring that extension.
+- Show task progress and status indicators while keeping TODO state aligned with session initialization and session-tree branch changes.
+- Preserve valid hidden updates, clear valid empty lists, collapse only visible/enabled successful results containing recognized tasks, and leave errors or malformed results fully visible.
+
 ## 0.7.0 — 2026-07-30
 
 - Add the responsive Display Settings Workspace with the real Status Rail preview, continuous preset/density/Segment editing, provenance, Session overrides, one-step Undo, Revert, and atomic User-default Save.

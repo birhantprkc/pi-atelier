@@ -37,7 +37,8 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Searchable tool controls
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
-- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, and Workspace Pulse activity
+- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, Workspace Pulse, and TODOS activity
+- TODO tracking for compatible `todo` results, including legacy details and the optional `@juicesharp/rpiv-todo` task format
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
 - User and trusted-project configuration
@@ -154,6 +155,10 @@ Press `Ctrl+Shift+R` to enter temporary Resize mode. The Pi workspace and sideba
 
 The split is implemented entirely inside Pi Atelier by wrapping the active TUI renderer at runtime; no Pi files are modified. This is a version-sensitive integration with Pi's current TUI structure and may require compatibility updates when Pi changes its renderer internals. A terminal character divider cannot display Ghostty's native hover resize cursor.
 
+The TODOS panel accepts both legacy Pi `todo` details (`todos` items with `done` booleans) and `@juicesharp/rpiv-todo` task details (`tasks` items with `pending`, `in_progress`, or `completed` states). The `@juicesharp/rpiv-todo` extension is optional and must be installed separately; Pi Atelier neither installs nor requires it. The panel shows `done/total` progress, status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs.
+
+TODO state follows session-tree branch changes. Valid updates received while the sidebar is hidden remain current, valid empty lists clear the panel, and unknown task states are ignored rather than rendered as pending. With the sidebar visible and `showSidebarTodos` enabled, successful results containing at least one recognized task collapse in the workspace to a `done/total` summary; errors and malformed results remain fully visible.
+
 ## Configuration
 
 User configuration:
@@ -206,7 +211,7 @@ Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-comp
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
 
-`showSidebarTodos` (default `true`) controls whether the sidebar displays a TODOS panel with the current task list from `todo` tool invocations. When enabled, the sidebar shows task progress (`done/total`), individual task status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs. When the sidebar is visible and this setting is enabled, the full todo tool output in the main workspace is collapsed to a summary line that directs attention to the sidebar. Malformed or error results from the todo tool are never collapsed, preserving visibility of failure information. Unknown or deleted task statuses are filtered out rather than rendered as pending. Set to `false` to disable the todos panel and show complete todo output in the workspace.
+`showSidebarTodos` (default `true`) controls whether the sidebar displays the TODOS panel. Set to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
 
 ## Presets
 
