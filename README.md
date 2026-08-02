@@ -71,8 +71,12 @@ git clone https://github.com/michaelmjhhhh/pi-atelier.git
 cd pi-atelier
 npm install
 npm run check
-pi -e .
+npx --no-install pi -e .
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](https://github.com/michaelmjhhhh/pi-atelier/blob/main/CONTRIBUTING.md) for setup, validation, and pull request expectations.
 
 ## Footer anatomy
 
@@ -253,7 +257,9 @@ Token and cost metrics are cumulative across the entire session. Context percent
 
 Pi Atelier intentionally does not install terminal UI in print, JSON, or RPC modes. In TUI mode, check whether another extension replaced the footer later in load order.
 
-## Publishing
+## Maintainer-only publishing
+
+Contributors must not publish packages, change release versions, create tags or releases, or edit npm publishing credentials. Maintainers own release verification, merging, releases, and publishing.
 
 Release verification must include:
 
