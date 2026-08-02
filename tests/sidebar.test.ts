@@ -1135,12 +1135,21 @@ describe("sidebar snapshot and layout", () => {
 		expect(fg).toHaveBeenCalledWith(expectedRole, expect.stringContaining(`${percent.toFixed(1)}%`));
 	});
 
-	it("hides the Agent panel when showSidebarAgent is false", () => {
+	it("hides Agent while retaining every populated sibling panel", () => {
 		const configWithoutAgent = { ...DEFAULT_CONFIG, showSidebarAgent: false };
-		const rows = contentRows(renderSidebarLines(snapshot(), configWithoutAgent, theme, 44, 36, false, 0));
+		const populated = {
+			...snapshot(),
+			todos: [
+				{ id: 1, text: "Visible TODO", status: "pending" as const },
+				{ id: 2, text: "Completed TODO", status: "completed" as const },
+			],
+		};
+		const rows = contentRows(renderSidebarLines(populated, configWithoutAgent, theme, 44, 64, false, 0));
 		expect(rows).not.toContain("AGENT");
-		expect(rows).toContain("CONTEXT");
-		expect(rows).toContain("WORKSPACE");
+		for (const panel of ["ACTIVITY", "TODOS", "CONTEXT", "WORKSPACE", "USAGE", "TOOLS"]) {
+			expect(rows).toContain(panel);
+		}
+		expect(rows.some((row) => row.includes("Visible TODO"))).toBe(true);
 	});
 
 	it("shows the Agent panel when showSidebarAgent is true", () => {

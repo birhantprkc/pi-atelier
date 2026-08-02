@@ -325,6 +325,10 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
 	Object.assign(config, resolved.display);
+	// Agent visibility is intentionally a global user-only preference, matching loadConfig.
+	const global = cloneConfig(DEFAULT_CONFIG);
+	applyNonDisplay(inputs[0], global, []);
+	config.showSidebarAgent = global.showSidebarAgent;
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings])],

@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
 import atelierExtension from "../extensions/index.js";
 
 function deferred<T>() {
@@ -19,7 +20,11 @@ const gitResult = (branch: string) => ({
 	killed: false,
 });
 
-function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Platform = "linux") {
+function harness(
+	mode: "tui" | "print" = "tui",
+	notificationPlatform: NodeJS.Platform = "linux",
+	interactiveMenus = false,
+) {
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	const commands = new Map<string, any>();
 	const eventBusHandlers = new Map<string, Set<(data: unknown) => void>>();
@@ -71,7 +76,7 @@ function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Pla
 		const pending = new Promise<any>((done) => {
 			resolve = done;
 		});
-		const done = vi.fn(() => resolve(undefined));
+		const done = vi.fn((value?: any) => resolve(value));
 		const handle = { hide: vi.fn() };
 		const component = factory(
 			tui,
@@ -89,7 +94,7 @@ function harness(mode: "tui" | "print" = "tui", notificationPlatform: NodeJS.Pla
 		options?.onHandle?.(handle);
 		const overlayOptions =
 			typeof options?.overlayOptions === "function" ? options.overlayOptions() : options?.overlayOptions;
-		if (!overlayOptions?.nonCapturing) done();
+		if (!overlayOptions?.nonCapturing && !interactiveMenus) done();
 		return pending;
 	});
 	const ctx = {
@@ -425,6 +430,66 @@ describe("extension registration", () => {
 		await command(h, "");
 		const menu = h.overlays[1]?.component.render(80).join("\n");
 		expect(menu).toContain("Sidebar: On");
+	});
+
+	it("drives the registered /atelier Control Center to persist and reload hidden Agent", async () => {
+		await withPersistedUserConfig({}, async () => {
+			const h = harness("tui", "linux", true);
+			h.ctx.sessionManager.getBranch.mockReturnValue([
+				{
+					type: "message",
+					message: {
+						role: "toolResult",
+						toolName: "todo",
+						details: {
+							todos: [
+								{ id: 1, text: "Visible TODO", done: false },
+								{ id: 2, text: "Completed TODO", done: true },
+							],
+							nextId: 3,
+						},
+					},
+				},
+			]);
+			h.saveConfigPatch.mockImplementation((path, patch) => persistConfigPatch(path, patch));
+
+			await start(h);
+			const initialSidebar = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(initialSidebar).toContain("AGENT");
+			expect(initialSidebar).toContain("TODOS");
+
+			// Use the public command seam and the SelectList component's input API.
+			const controlCenter = command(h, "");
+			await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+			h.overlays[1]?.component.handleInput("\r"); // Settings
+			await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+			for (let index = 0; index < 3; index += 1) h.overlays[2]?.component.handleInput("\u001b[B");
+			h.overlays[2]?.component.handleInput("\r"); // Agent panel
+
+			await vi.waitFor(() =>
+				expect(h.saveConfigPatch).toHaveBeenCalledWith(expect.stringContaining("pi-atelier.json"), {
+					showSidebarAgent: false,
+				}),
+			);
+			const hiddenSidebar = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(hiddenSidebar).not.toContain("AGENT");
+			expect(hiddenSidebar).toContain("TODOS");
+
+			// Close the interactive menu through Back, then Close rather than resolving it in the harness.
+			await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+			for (let index = 0; index < 4; index += 1) h.overlays[3]?.component.handleInput("\u001b[B");
+			h.overlays[3]?.component.handleInput("\r"); // Back
+			await vi.waitFor(() => expect(h.overlays).toHaveLength(5));
+			for (let index = 0; index < 3; index += 1) h.overlays[4]?.component.handleInput("\u001b[B");
+			h.overlays[4]?.component.handleInput("\r"); // Close
+			await controlCenter;
+
+			await start(h, replacementContext(h.ctx, "Reloaded session"));
+			const reloadedSidebar = h.overlays.at(-1)?.component.render(44).join("\n") ?? "";
+			expect(reloadedSidebar).not.toContain("AGENT");
+			expect(reloadedSidebar).toContain("TODOS");
+			expect(reloadedSidebar).toContain("Visible TODO");
+		});
 	});
 
 	it("passes NO_COLOR through to sidebar rendering", async () => {

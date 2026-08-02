@@ -2,7 +2,13 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, saveUserConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
+import {
+	loadConfig,
+	mergeConfig,
+	saveUserConfig,
+	saveUserConfigPatch,
+	validateConfig,
+} from "../src/config.js";
 import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
@@ -96,6 +102,15 @@ describe("configuration", () => {
 			session: { showSidebarAgent: true },
 		});
 		expect(result.config.showSidebarAgent).toBe(false);
+	});
+
+	it("keeps mergeConfig Agent visibility global-user-only", () => {
+		expect(
+			mergeConfig({ showSidebarAgent: false }, { showSidebarAgent: true }, { showSidebarAgent: true }).config,
+		).toMatchObject({ showSidebarAgent: false });
+		expect(
+			mergeConfig({}, { showSidebarAgent: false }, { showSidebarAgent: false }).config.showSidebarAgent,
+		).toBe(true);
 	});
 
 	it("ignores project and session Agent visibility when the user omits it", async () => {
