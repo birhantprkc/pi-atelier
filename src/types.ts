@@ -89,6 +89,7 @@ export interface AtelierConfig extends DisplaySettings {
 	currencyDecimals: number;
 	showSessionActions: boolean;
 	showSidebarToolNames: boolean;
+	showSidebarAgent: boolean;
 	showSidebarTodos: boolean;
 	completionNotifications: boolean;
 }
@@ -152,6 +153,7 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	currencyDecimals: 3,
 	showSessionActions: true,
 	showSidebarToolNames: false,
+	showSidebarAgent: true,
 	showSidebarTodos: true,
 	completionNotifications: true,
 };

@@ -104,7 +104,7 @@ Open Pi Atelier with:
 
 The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Settings** — the Display Settings Workspace, completion notifications, and the persisted sidebar tool-list preference
+- **Settings** — the Display Settings Workspace, completion notifications, sidebar tool-list expansion, and Agent panel visibility
 - **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
 - **Actions** — session details, rename, and safe compaction
 
@@ -137,9 +137,11 @@ The sidebar starts shown whenever the extension initializes. An explicit `off` a
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
 
-The scan-first hierarchy leads with agent state and model, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
+The Agent panel at the top of the sidebar can be hidden independently through **Settings → Agent panel** in the Control Center. The panel is shown by default; toggling it off saves immediately to user configuration and removes the agent state and model metadata from the sidebar.
 
-Below 40 sidebar columns, a unified compact mode stacks Agent and Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
+The scan-first hierarchy leads with agent state and model when enabled, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
+
+Below 40 sidebar columns, a unified compact mode stacks Agent metadata when enabled alongside Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
 
 ## Completion notifications
 
@@ -177,7 +179,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details and completion notifications are saved immediately so those preferences survive future sessions. Completion notifications are a global user preference, so project and session configuration cannot override that setting. Pi Atelier never modifies project configuration from the menu.
+Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details, Agent visibility, and completion notifications are saved immediately so those preferences survive future sessions. Agent visibility and completion notifications are global user preferences, so project and session configuration cannot override them. Pi Atelier never modifies project configuration from the menu.
 
 Complete example:
 
@@ -202,6 +204,7 @@ Complete example:
   "currencyDecimals": 3,
   "showSessionActions": true,
   "showSidebarToolNames": false,
+  "showSidebarAgent": true,
   "showSidebarTodos": true,
   "completionNotifications": true
 }
@@ -214,6 +217,8 @@ Product defaults are layered with **User default**, trusted **Project override**
 Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
+
+`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only preference; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. The preference can also be toggled through **Settings → Agent panel** in the Control Center and saves immediately.
 
 `showSidebarTodos` (default `true`) controls whether the sidebar displays the TODOS panel. Set to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
 

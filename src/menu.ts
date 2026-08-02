@@ -374,6 +374,11 @@ export async function openAtelierControlCenter(
 						label: `Sidebar tool list: ${sidebar.isToolListExpanded() ? "Expanded" : "Collapsed"}`,
 						description: "User preference",
 					},
+					{
+						value: "sidebar-agent",
+						label: `Agent panel: ${runtime.getConfig().showSidebarAgent ? "On" : "Off"}`,
+						description: "User preference",
+					},
 					{ value: "back", label: "Back" },
 				]);
 				if (!choice || choice === "back") break;
@@ -381,7 +386,19 @@ export async function openAtelierControlCenter(
 					await openDisplaySettingsWorkspace(ctx, runtime, userConfigPath, requestAllRenders, savePatch);
 				else if (choice === "notifications")
 					await actions.setCompletionNotifications(!runtime.getConfig().completionNotifications);
-				else await sidebar.toggleToolList();
+				else if (choice === "sidebar-agent") {
+					const next = !runtime.getConfig().showSidebarAgent;
+					runtime.setConfig({ ...runtime.getConfig(), showSidebarAgent: next });
+					try {
+						await savePatch(userConfigPath, { showSidebarAgent: next });
+						ctx.ui.notify(`Agent panel ${next ? "enabled" : "disabled"}`, "info");
+					} catch (error) {
+						ctx.ui.notify(
+							`Agent panel changed for this session but could not be saved: ${error instanceof Error ? error.message : String(error)}`,
+							"warning",
+						);
+					}
+				} else await sidebar.toggleToolList();
 			}
 		} else if (category === "controls") {
 			for (;;) {

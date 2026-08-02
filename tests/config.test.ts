@@ -2,7 +2,13 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { loadConfig, saveUserConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
+import {
+	loadConfig,
+	mergeConfig,
+	saveUserConfig,
+	saveUserConfigPatch,
+	validateConfig,
+} from "../src/config.js";
 import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
@@ -32,6 +38,7 @@ describe("configuration", () => {
 		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
+		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
 	});
 
 	it("applies named templates atomically before same-layer deviations", () => {
@@ -83,6 +90,38 @@ describe("configuration", () => {
 			session: { completionNotifications: true },
 		});
 		expect(result.config.completionNotifications).toBe(false);
+	});
+
+	it("lets a user Agent visibility preference win over trusted project and session values", async () => {
+		await writeJson(userPath, { showSidebarAgent: false });
+		await writeJson(projectPath, { showSidebarAgent: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarAgent: true },
+		});
+		expect(result.config.showSidebarAgent).toBe(false);
+	});
+
+	it("keeps mergeConfig Agent visibility global-user-only", () => {
+		expect(
+			mergeConfig({ showSidebarAgent: false }, { showSidebarAgent: true }, { showSidebarAgent: true }).config,
+		).toMatchObject({ showSidebarAgent: false });
+		expect(
+			mergeConfig({}, { showSidebarAgent: false }, { showSidebarAgent: false }).config.showSidebarAgent,
+		).toBe(true);
+	});
+
+	it("ignores project and session Agent visibility when the user omits it", async () => {
+		await writeJson(projectPath, { showSidebarAgent: false });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarAgent: false },
+		});
+		expect(result.config.showSidebarAgent).toBe(true);
 	});
 
 	it("does not read, warn about, or attribute an untrusted project", async () => {
@@ -171,6 +210,18 @@ describe("configuration", () => {
 		expect(result.warnings).toEqual(
 			expect.arrayContaining([expect.stringContaining("threshold"), "showSidebarToolNames must be boolean"]),
 		);
+	});
+
+	it("loads persisted showSidebarAgent false from user config", async () => {
+		await writeJson(userPath, { showSidebarAgent: false });
+		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
+		expect(result.config.showSidebarAgent).toBe(false);
+	});
+
+	it("rejects non-boolean showSidebarAgent with warning", () => {
+		const result = validateConfig({ showSidebarAgent: "off" });
+		expect(result.config.showSidebarAgent).toBe(true);
+		expect(result.warnings).toContain("showSidebarAgent must be boolean");
 	});
 
 	it("reports malformed JSON once and retains defaults", async () => {
