@@ -1,8 +1,13 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { resolveDisplayLayers } from "../src/config.js";
-import { createSettingsWorkspace } from "../src/settings-workspace.js";
-import { DEFAULT_CONFIG, type DisplayLayerState, type DisplayPatch } from "../src/types.js";
+import { createSettingsWorkspace, getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
+import {
+	DEFAULT_CONFIG,
+	type AtelierConfig,
+	type DisplayLayerState,
+	type DisplayPatch,
+} from "../src/types.js";
 
 const theme = {
 	fg: (_color: string, text: string) => text,
@@ -10,7 +15,23 @@ const theme = {
 	italic: (text: string) => text,
 };
 
-function harness(initialLayers: DisplayLayerState = {}) {
+function harness(
+	initialLayers: DisplayLayerState = {},
+	renderConfig: AtelierConfig = DEFAULT_CONFIG,
+	sidebarSettings: () => readonly {
+		id: AtelierConfig["sidebarPanelLayout"][number]["id"];
+		title: string;
+		available: boolean;
+		visible: boolean;
+	}[] = () =>
+		DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+			id: entry.id,
+			title: entry.id === "agent" ? "Agent" : entry.id,
+			available: entry.id !== "tools",
+			visible: entry.visible,
+		})),
+	viewportHeight?: () => number,
+) {
 	let layers: DisplayLayerState = structuredClone(initialLayers);
 	const render = vi.fn();
 	const live = vi.fn();
@@ -32,7 +53,9 @@ function harness(initialLayers: DisplayLayerState = {}) {
 		applySavedUserDisplayPatch: (patch) => {
 			layers = { ...layers, user: { ...layers.user, ...structuredClone(patch) } };
 		},
-		getRenderConfig: () => DEFAULT_CONFIG,
+		getRenderConfig: () => renderConfig,
+		getSidebarPanelLayout: sidebarSettings,
+		...(viewportHeight ? { getViewportHeight: viewportHeight } : {}),
 		theme,
 		colorEnabled: false,
 		requestWorkspaceRender: render,
@@ -55,6 +78,76 @@ const text = (component: ReturnType<typeof createSettingsWorkspace>, width = 120
 	component.render(width).join("\n");
 
 describe("Display Settings Workspace", () => {
+	it("merges newly discovered contributed panels into draft rows and saves enabled panels", async () => {
+		let discovered = false;
+		const configuredLayout = [
+			{ id: "vendor:missing" as const, visible: true },
+			...DEFAULT_CONFIG.sidebarPanelLayout,
+		];
+		const renderConfig = { ...DEFAULT_CONFIG, sidebarPanelLayout: configuredLayout };
+		const h = harness({}, renderConfig, () => [
+			...configuredLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id === "vendor:missing" ? "Missing" : entry.id,
+				available: entry.id !== "vendor:missing" && entry.id !== "tools",
+				visible: entry.visible,
+			})),
+			...(discovered
+				? [{ id: "vendor:queue" as const, title: "Queue", available: true, visible: false }]
+				: []),
+		]);
+		discovered = true;
+		expect(text(h.component)).toContain("Queue");
+		expect(text(h.component)).toContain("Missing  unavailable");
+
+		// Two display rows, nine segments, and three actions precede the configured layout.
+		for (let index = 0; index < 14 + configuredLayout.length; index += 1) h.component.handleInput("\u001b[B");
+		h.component.handleInput(" ");
+		h.component.handleInput("s");
+		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
+		expect(h.persist.mock.calls[0]?.[0]).toEqual(
+			expect.objectContaining({
+				sidebarPanelLayout: expect.arrayContaining([
+					{ id: "vendor:missing", visible: true },
+					{ id: "vendor:queue", visible: true },
+				]),
+			}),
+		);
+		expect(h.persist.mock.calls[0]?.[0].sidebarPanelLayout?.map((entry) => entry.id)).toEqual([
+			...configuredLayout.map((entry) => entry.id),
+			"vendor:queue",
+		]);
+	});
+
+	it("defensively sanitizes contributed titles before Settings interpolation", () => {
+		const h = harness({}, DEFAULT_CONFIG, () =>
+			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id === "agent" ? "\u001b[31mSafe\nTitle" : entry.id,
+				available: true,
+				visible: entry.visible,
+			})),
+		);
+		const rendered = text(h.component);
+		expect(rendered).toContain("Safe Title");
+		expect(rendered).not.toContain("[31m");
+	});
+
+	it("edits Sidebar as a draft, preserves unavailable placement, and saves only explicitly", async () => {
+		const h = harness();
+		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[B");
+		expect(text(h.component)).toContain("Sidebar Editor");
+		h.component.handleInput(" ");
+		h.component.handleInput("\u001b[1;2B");
+		expect(text(h.component)).toContain("agent");
+		h.component.handleInput("s");
+		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
+		expect(h.persist.mock.calls[0]?.[0]).toEqual(
+			expect.objectContaining({ sidebarPanelLayout: expect.any(Array) }),
+		);
+		expect(h.close).not.toHaveBeenCalled();
+	});
+
 	it("applies a complete preset continuously as one Session mutation and one Undo step", () => {
 		const h = harness();
 		h.component.handleInput(" ");
@@ -166,6 +259,106 @@ describe("Display Settings Workspace", () => {
 		expect(lines[previewStart + 1]).toContain("CRAFTING");
 		expect(lines[previewStart + 2]).toContain("└");
 		expect(lines.join("\n")).not.toContain("brand        ATELIER");
+	});
+
+	it("bounds the Display Settings frame to the live viewport without clipping its border", () => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		const lines = h.component.render(126);
+		expect(lines).toHaveLength(39);
+		expect(lines[0]).toContain("╭");
+		expect(lines.at(-1)).toContain("╰");
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+	});
+
+	it.each([0, 1, 2, 3, 4])(
+		"uses the same effective overlay height as the menu helper for terminal rows %s",
+		(rows) => {
+			const viewport = getDisplaySettingsViewportHeight(rows);
+			const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
+			expect(h.component.render(126)).toHaveLength(viewport);
+		},
+	);
+
+	it.each([0, 1, 2, 3, 4])("keeps every line within a tiny viewport of %s rows", (viewport) => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
+		const lines = h.component.render(126);
+		expect(lines).toHaveLength(viewport);
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+		if (viewport >= 2) {
+			expect(lines[0]).toContain("╭");
+			expect(lines.at(-1)).toContain("╰");
+		} else {
+			expect(lines.join("\n")).not.toContain("╭");
+		}
+	});
+
+	it("keeps top, middle, and bottom scroll states structurally focused", () => {
+		const top = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		const topLines = text(top.component);
+		expect(topLines).toContain("↓ more");
+		expect(topLines).not.toContain("↑ more");
+
+		const middle = harness({}, DEFAULT_CONFIG, undefined, () => 15);
+		const middleLines = text(middle.component);
+		expect(middleLines).toContain("↑ more");
+		expect(middleLines).toContain("↓ more");
+
+		for (let index = 0; index < 100; index += 1) middle.component.handleInput("\u001b[B");
+		const bottomLines = text(middle.component);
+		expect(bottomLines).toContain("↑ more");
+		expect(bottomLines).not.toContain("↓ more");
+	});
+
+	it("does not treat a contributed title containing the focus glyph as the focused row", () => {
+		const h = harness(
+			{},
+			DEFAULT_CONFIG,
+			() =>
+				DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+					id: entry.id,
+					title: entry.id === "agent" ? "Contributed › title" : entry.id,
+					available: true,
+					visible: entry.visible,
+				})),
+			() => 39,
+		);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const lines = h.component.render(126);
+		expect(lines.join("\n")).toContain("Contributed › title");
+		expect(lines.join("\n")).toContain("› Restore default");
+		expect(lines).toHaveLength(39);
+		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
+	});
+
+	it("keeps the focused last Sidebar action visible while scrolling", () => {
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => 39);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const lines = h.component.render(126);
+		expect(lines.join("\n")).toContain("› Restore default");
+		expect(lines.at(-1)).toContain("╰");
+		expect(lines).toHaveLength(39);
+	});
+
+	it("shows deterministic scroll indicators and adapts to live viewport resizing", () => {
+		let viewport = 39;
+		const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
+		for (let index = 0; index < 100; index += 1) h.component.handleInput("\u001b[B");
+		const bottom = h.component.render(126).join("\n");
+		expect(bottom).toContain("↑ more");
+		expect(bottom).not.toContain("↓ more");
+
+		viewport = 30;
+		const smaller = h.component.render(126);
+		expect(smaller).toHaveLength(30);
+		expect(smaller.join("\n")).toContain("› Restore default");
+		expect(smaller.join("\n")).toContain("↑ more");
+
+		viewport = 50;
+		const larger = h.component.render(126);
+		expect(larger).toHaveLength(50);
+		expect(larger.join("\n")).toContain("› Restore default");
+		expect(larger.join("\n")).not.toContain("↓ more");
+		expect(larger.every((line) => visibleWidth(line) <= 126)).toBe(true);
 	});
 
 	it("keeps value, provenance, and action shortcut columns fixed", () => {

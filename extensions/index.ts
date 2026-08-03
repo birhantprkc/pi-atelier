@@ -16,16 +16,73 @@ import {
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfig, saveUserConfigPatch } from "../src/config.js";
 import { createFooterComponent, type ThemeLike } from "../src/footer.js";
-import { openAtelierControlCenter, openDisplaySettingsWorkspace } from "../src/menu.js";
+import {
+	type DisplaySettingsRuntime,
+	openAtelierControlCenter,
+	openDisplaySettingsWorkspace,
+} from "../src/menu.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
+import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import {
 	buildSidebarSnapshot,
 	createSidebarController,
 	type SidebarController,
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
+import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	isSidebarPanelContributionId,
+	type SidebarPanelRegistry,
+} from "../src/sidebar-panels.js";
 import { AtelierRuntime } from "../src/state.js";
 import type { AtelierState, FooterState, NormalizedTodo, RpivTask, TodoItem } from "../src/types.js";
+
+export type {
+	SidebarPanelContribution,
+	SidebarPanelData,
+	SidebarPanelDiscoveryEvent,
+	SidebarPanelEvent,
+	SidebarPanelEventTransport,
+	SidebarPanelRegisterEvent,
+	SidebarPanelRegistry,
+	SidebarPanelRegistryOptions,
+	SidebarPanelRole,
+	SidebarPanelRow,
+	SidebarPanelUnregisterEvent,
+} from "../src/sidebar-panels.js";
+export {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	isSidebarPanelContributionId,
+	isSidebarPanelId,
+	isSidebarPanelRequestId,
+	isSidebarPanelRole,
+	isSidebarPanelSource,
+	isSidebarPanelTextWithinRawLimit,
+	normalizeSidebarPanelLayout,
+	registerSidebarPanel,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	SIDEBAR_PANEL_PROTOCOL_VERSION,
+} from "../src/sidebar-panels.js";
+export type {
+	BuiltinSidebarPanelId,
+	ContributedSidebarPanelId,
+	SidebarPanelId,
+	SidebarPanelLayout,
+	SidebarPanelLayoutEntry,
+} from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
 	saveConfig?: typeof saveUserConfig;
@@ -45,6 +102,7 @@ export default function atelierExtension(
 	let currentSessionManager: ExtensionContext["sessionManager"] | undefined;
 	let requestRender: () => void = () => undefined;
 	let sidebar: SidebarController | undefined;
+	let panelRegistry: SidebarPanelRegistry | undefined;
 	let runActivity: RunActivityTracker | undefined;
 	let completionNotifier: CompletionNotifier | undefined;
 	let unsubscribeAskUserBlocked: (() => void) | undefined;
@@ -146,6 +204,7 @@ export default function atelierExtension(
 		ctx: ExtensionContext,
 		targetRuntime: AtelierRuntime,
 		targetRunActivity: RunActivityTracker | undefined,
+		targetPanelRegistry: SidebarPanelRegistry | undefined = panelRegistry,
 	): SidebarSnapshot {
 		const sessionName = ctx.sessionManager.getSessionName();
 		const sessionFile = ctx.sessionManager.getSessionFile();
@@ -162,6 +221,7 @@ export default function atelierExtension(
 			extensionStatuses,
 			...(targetRunActivity ? { runActivity: targetRunActivity.getSnapshot() } : {}),
 			todos: cachedTodos,
+			sidebarPanels: targetPanelRegistry?.getAvailable() ?? [],
 		});
 	}
 
@@ -225,6 +285,33 @@ export default function atelierExtension(
 		};
 	}
 
+	function getSidebarPanelSettings(targetRuntime: AtelierRuntime): readonly SidebarPanelSetting[] {
+		const configured = targetRuntime.getSidebarPanelLayout();
+		const available = new Map((panelRegistry?.getAvailable() ?? []).map((panel) => [panel.id, panel]));
+		const configuredIds = new Set(configured.map((entry) => entry.id));
+		return [
+			...configured.map((entry) => {
+				const contributed = isSidebarPanelContributionId(entry.id) ? available.get(entry.id) : undefined;
+				return {
+					id: entry.id,
+					title: contributed?.title ?? entry.id,
+					available:
+						BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
+						contributed !== undefined,
+					visible: entry.visible,
+				};
+			}),
+			...Array.from(available.values())
+				.filter((panel) => !configuredIds.has(panel.id))
+				.map((panel) => ({
+					id: panel.id,
+					title: panel.title,
+					available: true,
+					visible: false,
+				})),
+		];
+	}
+
 	async function openMenu(ctx: ExtensionContext): Promise<void> {
 		const current = getCurrentContextState(ctx);
 		if (!current?.runtime || !current.sidebar) {
@@ -243,6 +330,7 @@ export default function atelierExtension(
 				toggle: () => targetSidebar.toggle(),
 				isToolListExpanded: () => targetRuntime.getConfig().showSidebarToolNames,
 				toggleToolList: async () => setSidebarToolNames(ctx, undefined, targetRuntime, targetSidebar),
+				getSidebarPanelSettings: () => getSidebarPanelSettings(targetRuntime),
 			},
 			requestAllRenders,
 			lifecycleGuardedSavePatch(targetRuntime),
@@ -260,23 +348,25 @@ export default function atelierExtension(
 			return;
 		}
 		const targetRuntime = current.runtime;
+		const displayRuntime: DisplaySettingsRuntime = {
+			getConfig: () => targetRuntime.getConfig(),
+			getSidebarPanelSettings: () => getSidebarPanelSettings(targetRuntime),
+			getDisplaySettings: () => targetRuntime.getDisplaySettings(),
+			getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
+			getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
+			replaceSessionDisplayOverride: (value) => {
+				if (runtime === targetRuntime) targetRuntime.replaceSessionDisplayOverride(value);
+			},
+			clearSessionDisplayOverride: () => {
+				if (runtime === targetRuntime) targetRuntime.clearSessionDisplayOverride();
+			},
+			applySavedUserDisplayPatch: (patch) => {
+				if (runtime === targetRuntime) targetRuntime.applySavedUserDisplayPatch(patch);
+			},
+		};
 		await openDisplaySettingsWorkspace(
 			ctx,
-			{
-				getConfig: () => targetRuntime.getConfig(),
-				getDisplaySettings: () => targetRuntime.getDisplaySettings(),
-				getDisplayProvenance: () => targetRuntime.getDisplayProvenance(),
-				getSessionDisplayOverride: () => targetRuntime.getSessionDisplayOverride(),
-				replaceSessionDisplayOverride: (value) => {
-					if (runtime === targetRuntime) targetRuntime.replaceSessionDisplayOverride(value);
-				},
-				clearSessionDisplayOverride: () => {
-					if (runtime === targetRuntime) targetRuntime.clearSessionDisplayOverride();
-				},
-				applySavedUserDisplayPatch: (patch) => {
-					if (runtime === targetRuntime) targetRuntime.applySavedUserDisplayPatch(patch);
-				},
-			},
+			displayRuntime,
 			join(getAgentDir(), "pi-atelier.json"),
 			requestAllRenders,
 			lifecycleGuardedSavePatch(targetRuntime),
@@ -395,6 +485,7 @@ export default function atelierExtension(
 
 		let localRuntime: AtelierRuntime | undefined;
 		let localSidebar: SidebarController | undefined;
+		let localPanelRegistry: SidebarPanelRegistry | undefined;
 		let localCompletionNotifier: CompletionNotifier | undefined;
 		const isFresh = (): boolean => initializationGeneration === lifecycleGeneration;
 		const localRunActivity = createRunActivityTracker({
@@ -436,6 +527,13 @@ export default function atelierExtension(
 				},
 			});
 			localRuntime = candidateRuntime;
+			localPanelRegistry = createSidebarPanelRegistry({
+				events: pi.events,
+				instanceId: `atelier-${initializationGeneration}`,
+				onChange: () => {
+					if (isFresh() && panelRegistry === localPanelRegistry) requestAllRenders();
+				},
+			});
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled && runtime === candidateRuntime && candidateRuntime.getConfig().completionNotifications,
@@ -449,7 +547,8 @@ export default function atelierExtension(
 			localCompletionNotifier = candidateCompletionNotifier;
 			localSidebar = createSidebarController({
 				ctx: initializationContext,
-				getSnapshot: () => getSidebarSnapshot(initializationContext, candidateRuntime, localRunActivity),
+				getSnapshot: () =>
+					getSidebarSnapshot(initializationContext, candidateRuntime, localRunActivity, localPanelRegistry),
 				getConfig: () => candidateRuntime.getConfig(),
 				colorEnabled: !("NO_COLOR" in process.env),
 				shouldAnimate: () => runActivity?.isRunning() ?? false,
@@ -462,6 +561,7 @@ export default function atelierExtension(
 			});
 			if (!isFresh()) {
 				localSidebar.dispose();
+				localPanelRegistry?.dispose();
 				localRunActivity.reset();
 				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
@@ -471,11 +571,13 @@ export default function atelierExtension(
 			const previousSidebar = sidebar;
 			const previousRuntime = runtime;
 			const previousRunActivity = runActivity;
+			const previousPanelRegistry = panelRegistry;
 			const previousCompletionNotifier = completionNotifier;
 			const previousUnsubscribeAskUserBlocked = unsubscribeAskUserBlocked;
 			runtime = candidateRuntime;
 			sidebar = localSidebar;
 			runActivity = localRunActivity;
+			panelRegistry = localPanelRegistry;
 			completionNotifier = candidateCompletionNotifier;
 			currentContext = initializationContext;
 			currentSessionManager = initializationContext.sessionManager;
@@ -501,6 +603,7 @@ export default function atelierExtension(
 			});
 			extensionStatuses = [];
 			previousSidebar?.dispose();
+			previousPanelRegistry?.dispose();
 			previousRuntime?.dispose();
 			previousRunActivity?.reset();
 			previousCompletionNotifier?.reset();
@@ -545,12 +648,15 @@ export default function atelierExtension(
 			void candidateRuntime.refreshWorkspacePulse();
 		} catch (error) {
 			localSidebar?.dispose();
+			localPanelRegistry?.dispose();
 			localRunActivity.reset();
 			localCompletionNotifier?.reset();
 			localRuntime?.dispose();
 			if (!isFresh()) return;
 			sidebar?.dispose();
 			sidebar = undefined;
+			panelRegistry?.dispose();
+			panelRegistry = undefined;
 			runtime?.dispose();
 			runtime = undefined;
 			const previousRunActivity = runActivity;
@@ -640,7 +746,16 @@ export default function atelierExtension(
 		if (ctx.sessionManager === cachedTodosSessionManager) cachedTodos = todoList;
 		const sidebarVisible = current.sidebar?.isVisible() ?? false;
 		if (sidebarVisible) current.sidebar?.requestRender();
-		if (!current.runtime.getConfig().showSidebarTodos || !sidebarVisible || todoList.length === 0) return;
+		const sidebarTodoLayout = current.runtime
+			.getConfig()
+			.sidebarPanelLayout.find((entry) => entry.id === "todos");
+		if (
+			!current.runtime.getConfig().showSidebarTodos ||
+			sidebarTodoLayout?.visible === false ||
+			!sidebarVisible ||
+			todoList.length === 0
+		)
+			return;
 		const done = todoList.filter((t) => t.status === "completed").length;
 		return {
 			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],
@@ -672,6 +787,8 @@ export default function atelierExtension(
 		lifecycleGeneration += 1;
 		(current?.sidebar ?? sidebar)?.dispose();
 		sidebar = undefined;
+		panelRegistry?.dispose();
+		panelRegistry = undefined;
 		(current?.runtime ?? runtime)?.dispose();
 		runtime = undefined;
 		const previousRunActivity = current?.runActivity ?? runActivity;

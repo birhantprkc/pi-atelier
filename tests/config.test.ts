@@ -39,6 +39,48 @@ describe("configuration", () => {
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
+		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
+			"agent",
+			"activity",
+			"alerts",
+			"todos",
+			"context",
+			"workspace",
+			"usage",
+			"tools",
+		]);
+	});
+
+	it("loads an ordered global Sidebar layout with deterministic compatibility precedence", async () => {
+		await writeJson(userPath, {
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [
+				{ id: "tools", visible: false },
+				{ id: "vendor:queue", visible: false },
+				{ id: "tools", visible: true },
+			],
+		});
+		await writeJson(projectPath, { sidebarPanelLayout: [{ id: "agent", visible: false }] });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { sidebarPanelLayout: [] },
+		});
+		expect(result.config.sidebarPanelLayout.slice(0, 2)).toEqual([
+			{ id: "tools", visible: false },
+			{ id: "vendor:queue", visible: false },
+		]);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
+		expect(result.warnings.filter((warning) => warning.includes("duplicate")).length).toBe(1);
+	});
+
+	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {
+		const result = validateConfig({ showSidebarAgent: false, showSidebarTodos: false });
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
 	it("applies named templates atomically before same-layer deviations", () => {
@@ -56,6 +98,42 @@ describe("configuration", () => {
 		const result = validateConfig({ shortcut: "ctrl+x" }, base);
 		expect(result.config).toMatchObject({ preset: "minimal", density: "compact", shortcut: "ctrl+x" });
 		expect(result.config.segmentLayout).toEqual(DISPLAY_TEMPLATES.minimal.segmentLayout);
+	});
+
+	it("preserves a custom base Sidebar layout when input omits layout", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: true,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "agent" as const, visible: false },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => !["agent", "todos"].includes(entry.id)),
+			],
+		};
+		const result = validateConfig({ shortcut: "ctrl+x" }, base);
+		expect(result.config.sidebarPanelLayout).toEqual(base.sidebarPanelLayout);
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(true);
+	});
+
+	it("translates legacy Sidebar visibility against a custom base without resetting it", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: true,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "agent" as const, visible: false },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => entry.id !== "agent"),
+			],
+		};
+		const result = validateConfig({ showSidebarTodos: false }, base);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "vendor:queue")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(false);
 	});
 
 	it("merges user, trusted project, then session with actionable provenance", async () => {
@@ -104,24 +182,49 @@ describe("configuration", () => {
 		expect(result.config.showSidebarAgent).toBe(false);
 	});
 
-	it("keeps mergeConfig Agent visibility global-user-only", () => {
+	it("keeps legacy Agent and TODOS visibility global-user-only in mergeConfig", () => {
 		expect(
-			mergeConfig({ showSidebarAgent: false }, { showSidebarAgent: true }, { showSidebarAgent: true }).config,
-		).toMatchObject({ showSidebarAgent: false });
+			mergeConfig(
+				{ showSidebarAgent: false, showSidebarTodos: false },
+				{ showSidebarAgent: true, showSidebarTodos: true },
+				{ showSidebarAgent: true, showSidebarTodos: true },
+			).config,
+		).toMatchObject({ showSidebarAgent: false, showSidebarTodos: false });
 		expect(
-			mergeConfig({}, { showSidebarAgent: false }, { showSidebarAgent: false }).config.showSidebarAgent,
-		).toBe(true);
+			mergeConfig(
+				{},
+				{ showSidebarAgent: false, showSidebarTodos: false },
+				{
+					showSidebarAgent: false,
+					showSidebarTodos: false,
+				},
+			).config,
+		).toMatchObject({ showSidebarAgent: true, showSidebarTodos: true });
 	});
 
-	it("ignores project and session Agent visibility when the user omits it", async () => {
-		await writeJson(projectPath, { showSidebarAgent: false });
+	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
+		await writeJson(projectPath, { showSidebarAgent: false, showSidebarTodos: false });
 		const result = await loadConfig({
 			userPath,
 			projectPath,
 			projectTrusted: true,
-			session: { showSidebarAgent: false },
+			session: { showSidebarAgent: false, showSidebarTodos: false },
 		});
 		expect(result.config.showSidebarAgent).toBe(true);
+		expect(result.config.showSidebarTodos).toBe(true);
+	});
+
+	it("keeps a user legacy TODOS value ahead of trusted project and session values", async () => {
+		await writeJson(userPath, { showSidebarTodos: false });
+		await writeJson(projectPath, { showSidebarTodos: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarTodos: true },
+		});
+		expect(result.config.showSidebarTodos).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
 	it("does not read, warn about, or attribute an untrusted project", async () => {

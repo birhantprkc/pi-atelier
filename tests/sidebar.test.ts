@@ -5,7 +5,24 @@ import {
 	buildSidebarSnapshot,
 	createSidebarComponent,
 	createSidebarController,
+	createSidebarPanelRegistry,
+	isSidebarPanelContributionId,
+	isSidebarPanelId,
+	isSidebarPanelRequestId,
+	isSidebarPanelTextWithinRawLimit,
+	registerSidebarPanel,
 	renderSidebarLines,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
 import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
@@ -138,6 +155,750 @@ function fakeTui(requestRender = vi.fn()) {
 }
 
 describe("sidebar snapshot and layout", () => {
+	it("composes visible panels in persisted order and keeps unavailable entries out of rendering", () => {
+		const ordered = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [
+				{ id: "vendor:queue" as const, visible: true },
+				{ id: "tools" as const, visible: true },
+				{ id: "activity" as const, visible: true },
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => !["tools", "activity"].includes(entry.id)),
+			],
+		};
+		const lines = renderSidebarLines(
+			{
+				...snapshot(),
+				sidebarPanels: [
+					{
+						id: "vendor:queue",
+						title: "Queue",
+						rows: [{ text: "queued 2" }],
+						available: true,
+						source: "vendor",
+					},
+				],
+			},
+			ordered,
+			theme,
+			44,
+			36,
+		);
+		const text = contentRows(lines).join("\n");
+		expect(text.indexOf("QUEUE")).toBeGreaterThanOrEqual(0);
+		expect(text.indexOf("QUEUE")).toBeLessThan(text.indexOf("TOOLS"));
+		expect(text).not.toContain("AGENT");
+	});
+
+	it("supports load-order discovery, updates, and removal through the public event seam", () => {
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
+		const changed = vi.fn();
+		const registry = createSidebarPanelRegistry({ events, onChange: changed });
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		publisher.update({
+			id: "vendor:queue",
+			title: "Updated queue",
+			rows: [{ text: "two", role: "warning" }],
+		});
+		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
+		publisher.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		expect(changed).toHaveBeenCalled();
+		expect(SIDEBAR_PANEL_EVENT_CHANNEL).toBe("pi-atelier:sidebar-panels");
+		registry.dispose();
+	});
+
+	it("accepts namespaced contributors whose source matches the discovery prefix", () => {
+		const listeners = new Set<(data: unknown) => void>();
+		const emitted: unknown[] = [];
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const registry = createSidebarPanelRegistry({ events, instanceId: "vendor" });
+		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Queue", rows: ["ready"] },
+		});
+		expect(registry.get("vendor:queue")?.source).toBe("vendor");
+		expect(emitted[0]).toMatchObject({ type: "discover", requestId: "vendor-1" });
+		registry.dispose();
+	});
+
+	it("validates contributed IDs and bounded discovery request IDs at both public seams", () => {
+		expect(isSidebarPanelContributionId("vendor:queue")).toBe(true);
+		for (const suffix of ["\n", "\r", "\r\n", "\u2028", "\u2029", " ", "\t"]) {
+			expect(isSidebarPanelContributionId(`vendor:queue${suffix}`)).toBe(false);
+		}
+		expect(isSidebarPanelContributionId("agent")).toBe(false);
+		expect(isSidebarPanelContributionId("Vendor:queue")).toBe(false);
+		expect(isSidebarPanelContributionId("vendor:")).toBe(false);
+		expect(isSidebarPanelRequestId("normal-request")).toBe(true);
+		expect(isSidebarPanelRequestId("π-界🙂")).toBe(true);
+		expect(isSidebarPanelRequestId("")).toBe(false);
+		expect(isSidebarPanelRequestId(" ")).toBe(false);
+		expect(isSidebarPanelRequestId("bad\nrequest")).toBe(false);
+		expect(isSidebarPanelRequestId("\ud800")).toBe(false);
+		expect(isSidebarPanelRequestId("x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1))).toBe(false);
+
+		const emitted: unknown[] = [];
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: [] });
+		const initialRegisterCount = emitted.filter(
+			(data) => (data as { type?: unknown }).type === "register",
+		).length;
+		for (const requestId of ["", " ", "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1), null]) {
+			events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, { version: 1, type: "discover", requestId });
+		}
+		expect(emitted.filter((data) => (data as { type?: unknown }).type === "register")).toHaveLength(
+			initialRegisterCount,
+		);
+		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "discover",
+			requestId: "π-界🙂",
+		});
+		const response = emitted.at(-1) as { type?: string; requestId?: string };
+		expect(response).toMatchObject({ type: "register", requestId: "π-界🙂" });
+
+		const registryEvents = {
+			on: () => () => undefined,
+			emit: (_channel: string, data: unknown) => emitted.push(data),
+		};
+		const registry = createSidebarPanelRegistry({
+			events: registryEvents,
+			instanceId: "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1),
+		});
+		const generated = emitted.at(-1) as { type?: string; requestId?: string };
+		expect(generated.type).toBe("discover");
+		expect(generated.requestId).toBe("atelier-1");
+		expect(generated.requestId?.length).toBeLessThanOrEqual(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS);
+		registry.dispose();
+		publisher.dispose();
+	});
+
+	it("allocates revisions across same-source publishers without coupling transports", () => {
+		const makeEvents = () => {
+			const listeners = new Set<(data: unknown) => void>();
+			const emitted: unknown[] = [];
+			return {
+				events: {
+					on: (_channel: string, handler: (data: unknown) => void) => {
+						listeners.add(handler);
+						return () => listeners.delete(handler);
+					},
+					emit: (_channel: string, data: unknown) => {
+						emitted.push(data);
+						for (const listener of [...listeners]) listener(data);
+					},
+				},
+				emitted,
+			};
+		};
+		const firstTransport = makeEvents();
+		const secondTransport = makeEvents();
+		const first = registerSidebarPanel(
+			{ events: firstTransport.events },
+			{ id: "vendor:queue", title: "Queue", rows: ["one"] },
+			{ source: "vendor" },
+		);
+		const second = registerSidebarPanel(
+			{ events: firstTransport.events },
+			{ id: "vendor:status", title: "Status", rows: ["ready"] },
+			{ source: "vendor" },
+		);
+		registerSidebarPanel(
+			{ events: secondTransport.events },
+			{ id: "vendor:other", title: "Other", rows: ["isolated"] },
+			{ source: "vendor" },
+		);
+
+		const registry = createSidebarPanelRegistry({ events: firstTransport.events });
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		expect(registry.get("vendor:status")?.title).toBe("Status");
+		first.update({ id: "vendor:queue", title: "Updated queue", rows: ["two"] });
+		second.update({ id: "vendor:status", title: "Updated status", rows: ["busy"] });
+		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
+		expect(registry.get("vendor:status")?.rows[0]?.text).toBe("busy");
+		first.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		expect(registry.get("vendor:status")?.title).toBe("Updated status");
+		expect((firstTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
+		expect((secondTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
+		second.dispose();
+		registry.dispose();
+	});
+
+	it("caps helper publisher sources while preserving updates, disposal, and source revisions", () => {
+		const listeners = new Set<(data: unknown) => void>();
+		const emitted: unknown[] = [];
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const panel = (id: string, title = id) => ({
+			id: id as `${string}:${string}`,
+			title,
+			rows: [],
+		});
+		const malformed = registerSidebarPanel({ events }, panel("vendor:malformed-source"), {
+			source: "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1),
+		});
+		malformed.update(panel("vendor:malformed-source", "Should stay inert"));
+		malformed.dispose();
+		expect(emitted).toEqual([]);
+		const publishers = Array.from({ length: SIDEBAR_PANEL_MAX_TRACKED_SOURCES }, (_, index) =>
+			registerSidebarPanel({ events }, panel(`vendor:allocator-${index}`), { source: `allocator-${index}` }),
+		);
+		const registry = createSidebarPanelRegistry({ events });
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
+
+		const beforeOverflow = emitted.length;
+		const overflow = registerSidebarPanel({ events }, panel("vendor:allocator-overflow"), {
+			source: "allocator-overflow",
+		});
+		overflow.update(panel("vendor:allocator-overflow", "Updated overflow"));
+		overflow.dispose();
+		expect(emitted).toHaveLength(beforeOverflow);
+		expect(registry.get("vendor:allocator-overflow")).toBeUndefined();
+
+		publishers[0]?.update(panel("vendor:allocator-0", "Updated tracked"));
+		expect(registry.get("vendor:allocator-0")?.title).toBe("Updated tracked");
+		publishers[0]?.dispose();
+		expect(registry.get("vendor:allocator-0")).toBeUndefined();
+
+		const reused = registerSidebarPanel({ events }, panel("vendor:allocator-reused", "Reused source"), {
+			source: "allocator-0",
+		});
+		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
+		const reusedRevision = (emitted.at(-1) as { revision?: number })?.revision;
+		expect(reusedRevision).toBeGreaterThan(1);
+		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "allocator-0",
+			revision: (reusedRevision ?? 1) - 1,
+			panel: panel("vendor:allocator-reused", "Stale reuse"),
+		});
+		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
+		reused.dispose();
+		expect(registry.get("vendor:allocator-reused")).toBeUndefined();
+		for (const publisher of publishers.slice(1)) publisher.dispose();
+		registry.dispose();
+	});
+
+	it("rejects built-in public contributions before ownership, revisions, or capacity are consumed", () => {
+		const registry = createSidebarPanelRegistry();
+		// @ts-expect-error Built-in IDs are intentionally rejected by this contributed-panel API.
+		expect(registry.register({ id: "agent", title: "Spoofed", rows: [] })).toBe(false);
+		for (const id of ["agent", "tools"] as const) {
+			registry.handleEvent({
+				version: 1,
+				type: "register",
+				source: "vendor",
+				revision: 1,
+				panel: { id, title: "Spoofed", rows: [] },
+			});
+		}
+		expect(registry.get("agent")).toBeUndefined();
+		expect(registry.get("tools")).toBeUndefined();
+		expect(registry.getAvailable()).toEqual([]);
+		// The rejected built-in events do not consume the source's first revision.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Queue", rows: [] },
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		// Nor do they consume a panel slot when the registry is one slot from full.
+		const capacityRegistry = createSidebarPanelRegistry();
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS - 1; index += 1) {
+			expect(capacityRegistry.register({ id: `vendor:panel-${index}`, title: "Panel", rows: [] })).toBe(true);
+		}
+		capacityRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "capacity-source",
+			revision: 1,
+			panel: { id: "activity", title: "Spoofed", rows: [] },
+		});
+		capacityRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "capacity-source",
+			revision: 1,
+			panel: { id: "capacity-source:panel", title: "Accepted", rows: [] },
+		});
+		expect(capacityRegistry.get("capacity-source:panel")?.title).toBe("Accepted");
+		expect(capacityRegistry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+		registry.dispose();
+		capacityRegistry.dispose();
+	});
+
+	it("rejects malformed public events and preserves panel ownership across revisions", () => {
+		const registry = createSidebarPanelRegistry();
+		for (const event of [
+			undefined,
+			null,
+			{},
+			{ version: 2, type: "register" },
+			{ version: 1, type: "register", source: "vendor", revision: 1 },
+			{
+				version: 1,
+				type: "register",
+				source: "vendor",
+				revision: 1,
+				panel: { id: "not-namespaced", title: "Bad", rows: [] },
+			},
+			{
+				version: 1,
+				type: "register",
+				source: "vendor",
+				revision: 1,
+				panel: { id: "vendor:queue", title: "Queue", rows: [null] },
+			},
+		])
+			registry.handleEvent(event);
+		expect(registry.getAvailable()).toEqual([]);
+
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Queue", rows: ["one"] },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "other",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Hijack", rows: ["bad"] },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:queue", title: "Stale", rows: ["stale"] },
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Queue");
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 2,
+			panel: { id: "vendor:queue", title: "Updated", rows: ["two"] },
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "other",
+			revision: 2,
+			id: "vendor:queue",
+		});
+		expect(registry.get("vendor:queue")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "vendor",
+			revision: 3,
+			id: "vendor:queue",
+		});
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		registry.dispose();
+	});
+
+	it("bounds raw title and row work before sanitization while preserving valid Unicode", () => {
+		expect(
+			isSidebarPanelTextWithinRawLimit(
+				"x".repeat(SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS),
+				SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+			),
+		).toBe(true);
+		expect(
+			isSidebarPanelTextWithinRawLimit(
+				"x".repeat(SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS + 1),
+				SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+			),
+		).toBe(false);
+		const registry = createSidebarPanelRegistry();
+		expect(
+			registry.register({
+				id: "vendor:huge-title",
+				title: "x".repeat(1_000_000),
+				rows: [],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:huge-row-string",
+				title: "Valid",
+				rows: ["x".repeat(1_000_000)],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:huge-row-object",
+				title: "Valid",
+				rows: [{ text: "x".repeat(1_000_000) }],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:unicode",
+				title: "é界🙂".repeat(12),
+				rows: [{ text: "é界🙂".repeat(40), role: "ready" }],
+			}),
+		).toBe(true);
+		expect(registry.get("vendor:unicode")).toMatchObject({
+			title: "é界🙂".repeat(12),
+			rows: [{ text: "é界🙂".repeat(40), role: "ready" }],
+		});
+		registry.dispose();
+	});
+
+	it("sanitizes titles and rows and rejects oversized contribution payloads", () => {
+		const registry = createSidebarPanelRegistry();
+		expect(
+			registry.register({
+				id: "vendor:safe",
+				title: "\u001b[31mQueue\nready\u001b[0m",
+				rows: ["one\n two", { text: "\u001b[33mtwo\u001b[0m", role: "warning" }],
+			}),
+		).toBe(true);
+		expect(registry.get("vendor:safe")).toMatchObject({
+			title: "Queue ready",
+			rows: [{ text: "one two" }, { text: "two", role: "warning" }],
+		});
+		expect(
+			registry.register({
+				id: "vendor:long-title",
+				title: "t".repeat(SIDEBAR_PANEL_MAX_TITLE_CHARS + 1),
+				rows: [],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:long-row",
+				title: "Long row",
+				rows: ["r".repeat(SIDEBAR_PANEL_MAX_ROW_CHARS + 1)],
+			}),
+		).toBe(false);
+		expect(
+			registry.register({
+				id: "vendor:many-rows",
+				title: "Many rows",
+				rows: Array.from({ length: SIDEBAR_PANEL_MAX_ROWS + 1 }, () => "row"),
+			}),
+		).toBe(false);
+		expect(registry.getAvailable()).toHaveLength(1);
+		registry.dispose();
+	});
+
+	it("bounds IDs and source names at direct, event, and publisher seams", () => {
+		const registry = createSidebarPanelRegistry();
+		const longId = `vendor:${"x".repeat(SIDEBAR_PANEL_MAX_ID_CHARS)}` as `vendor:${string}`;
+		const longSource = "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1);
+		const safePanel = { id: "vendor:safe" as const, title: "Safe", rows: [] };
+
+		expect(isSidebarPanelId(longId)).toBe(false);
+		expect(registry.register({ ...safePanel, id: longId })).toBe(false);
+		expect(registry.unregister(longId, "vendor")).toBe(false);
+		expect(registry.register(safePanel, longSource)).toBe(false);
+		expect(registry.unregister(safePanel.id, longSource)).toBe(false);
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { ...safePanel, id: longId },
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: longSource,
+			revision: 1,
+			panel: safePanel,
+		});
+		expect(registry.getAvailable()).toEqual([]);
+
+		const emitted: unknown[] = [];
+		const events = {
+			on: () => () => undefined,
+			emit: (_channel: string, data: unknown) => emitted.push(data),
+		};
+		const invalidIdPublisher = registerSidebarPanel({ events }, { ...safePanel, id: longId });
+		const invalidSourcePublisher = registerSidebarPanel({ events }, safePanel, { source: longSource });
+		expect(emitted).toEqual([]);
+		invalidIdPublisher.update(safePanel);
+		invalidSourcePublisher.update(safePanel);
+		invalidIdPublisher.dispose();
+		invalidSourcePublisher.dispose();
+		expect(emitted).toEqual([]);
+		registry.dispose();
+	});
+
+	it("caps new panels while allowing updates and unregisters to free capacity", () => {
+		const registry = createSidebarPanelRegistry();
+		const panel = (id: string, title = id) => ({
+			id: id as `vendor:${string}`,
+			title,
+			rows: [],
+		});
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
+			expect(registry.register(panel(`vendor:panel-${index}`))).toBe(true);
+		}
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+		expect(registry.register(panel("vendor:overflow"), "overflow")).toBe(false);
+
+		// A valid update at capacity is accepted and consumes its source revision.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: panel("vendor:panel-0", "Updated at capacity"),
+		});
+		expect(registry.get("vendor:panel-0")?.title).toBe("Updated at capacity");
+
+		// Capacity-rejected registrations do not consume a source revision, so
+		// retrying the same event after capacity is freed succeeds.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 1,
+			panel: panel("vendor:overflow", "Overflow"),
+		});
+		expect(registry.get("vendor:overflow")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "vendor",
+			revision: 2,
+			id: "vendor:panel-0",
+		});
+		expect(registry.get("vendor:panel-0")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 1,
+			panel: panel("vendor:overflow", "Retried after capacity"),
+		});
+		expect(registry.get("vendor:overflow")?.title).toBe("Retried after capacity");
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow",
+			revision: 2,
+			panel: panel("vendor:overflow", "Accepted after unregister"),
+		});
+		expect(registry.get("vendor:overflow")?.title).toBe("Accepted after unregister");
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+
+		// The direct seam gets the same capacity behavior after an unregister.
+		expect(registry.unregister("vendor:panel-1", "vendor")).toBe(true);
+		expect(registry.register(panel("vendor:direct"), "vendor")).toBe(true);
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
+		registry.dispose();
+	});
+
+	it("does not track capacity-rejected or invalid-owner sources", () => {
+		const panel = (id: string, title = id) => ({
+			id: id as `vendor:${string}`,
+			title,
+			rows: [],
+		});
+		const capacityRegistry = createSidebarPanelRegistry();
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
+			expect(capacityRegistry.register(panel(`vendor:full-${index}`), "owner")).toBe(true);
+		}
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
+			capacityRegistry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `capacity-${index}`,
+				revision: 1,
+				panel: panel(`capacity-${index}:panel`),
+			});
+		}
+		capacityRegistry.unregister("vendor:full-0", "owner");
+		capacityRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "capacity-0",
+			revision: 1,
+			panel: panel("capacity-0:panel", "Accepted after retry"),
+		});
+		expect(capacityRegistry.get("capacity-0:panel")?.title).toBe("Accepted after retry");
+		capacityRegistry.dispose();
+
+		const ownerRegistry = createSidebarPanelRegistry();
+		expect(ownerRegistry.register(panel("vendor:owned"), "owner")).toBe(true);
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
+			ownerRegistry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `hijacker-${index}`,
+				revision: 1,
+				panel: panel("vendor:owned", "Hijacked"),
+			});
+			ownerRegistry.handleEvent({
+				version: 1,
+				type: "unregister",
+				source: `missing-${index}`,
+				revision: 1,
+				id: "vendor:missing",
+			});
+		}
+		ownerRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "missing-0",
+			revision: 1,
+			panel: panel("vendor:missing", "Accepted after missing removal"),
+		});
+		expect(ownerRegistry.get("vendor:missing")?.title).toBe("Accepted after missing removal");
+		ownerRegistry.unregister("vendor:owned", "owner");
+		ownerRegistry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "hijacker-0",
+			revision: 1,
+			panel: panel("vendor:owned", "Accepted after owner removal"),
+		});
+		expect(ownerRegistry.get("vendor:owned")?.title).toBe("Accepted after owner removal");
+		ownerRegistry.dispose();
+	});
+
+	it("bounds tracked sources while preserving revisions for active sources", () => {
+		const registry = createSidebarPanelRegistry();
+		const panel = (id: string, title = id) => ({
+			id: id as `${string}:${string}`,
+			title,
+			rows: [],
+		});
+		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES; index += 1) {
+			registry.handleEvent({
+				version: 1,
+				type: "register",
+				source: `tracked-${index}`,
+				revision: 1,
+				panel: panel(`tracked-${index}:panel`),
+			});
+		}
+		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "tracked-0",
+			revision: 2,
+			id: "tracked-0:panel",
+		});
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "overflow-source",
+			revision: 1,
+			panel: panel("overflow-source:panel"),
+		});
+		expect(registry.get("overflow-source:panel")).toBeUndefined();
+
+		// A tracked source remains usable for updates and removal after the cap.
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "tracked-1",
+			revision: 2,
+			panel: panel("tracked-1:panel", "Updated"),
+		});
+		expect(registry.get("tracked-1:panel")?.title).toBe("Updated");
+		registry.handleEvent({
+			version: 1,
+			type: "unregister",
+			source: "tracked-1",
+			revision: 3,
+			id: "tracked-1:panel",
+		});
+		expect(registry.get("tracked-1:panel")).toBeUndefined();
+		registry.handleEvent({
+			version: 1,
+			type: "register",
+			source: "tracked-1",
+			revision: 2,
+			panel: panel("tracked-1:panel", "Stale"),
+		});
+		expect(registry.get("tracked-1:panel")).toBeUndefined();
+		registry.dispose();
+	});
+
+	it("keeps publisher IDs stable and ignores updates after teardown", () => {
+		const emitted: unknown[] = [];
+		const listeners = new Set<(data: unknown) => void>();
+		const events = {
+			on: (_channel: string, handler: (data: unknown) => void) => {
+				listeners.add(handler);
+				return () => listeners.delete(handler);
+			},
+			emit: (_channel: string, data: unknown) => {
+				emitted.push(data);
+				for (const listener of [...listeners]) listener(data);
+			},
+		};
+		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
+		const registry = createSidebarPanelRegistry({ events });
+		publisher.update({ id: "other:panel", title: "Renamed", rows: ["two"] });
+		expect(registry.get("vendor:queue")?.title).toBe("Renamed");
+		expect(registry.get("other:panel")).toBeUndefined();
+		expect((emitted.at(-1) as { panel?: { id?: string } })?.panel?.id).toBe("vendor:queue");
+		publisher.dispose();
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		registry.dispose();
+		publisher.update({ id: "vendor:queue", title: "After dispose", rows: ["three"] });
+		expect(registry.getAvailable()).toEqual([]);
+	});
+
 	it("builds the approved core overview", () => {
 		expect(snapshot()).toMatchObject({
 			projectName: "pi-atelier",
@@ -149,6 +910,53 @@ describe("sidebar snapshot and layout", () => {
 			activeToolCount: 8,
 			availableToolCount: 12,
 		});
+	});
+
+	it("sanitizes contributed title and structured row text at render time", () => {
+		const config = {
+			...DEFAULT_CONFIG,
+			sidebarPanelLayout: [
+				{ id: "vendor:unsafe" as const, visible: true },
+				...DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false })),
+			],
+		};
+		const rendered = renderSidebarLines(
+			{
+				...snapshot(),
+				sidebarPanels: [
+					{
+						id: "vendor:unsafe",
+						title: "\u001b[31mUnsafe\nTitle",
+						rows: [{ text: "row\nvalue\u001b[33m", role: "warning" }],
+						available: true,
+						source: "vendor",
+					},
+				],
+			},
+			config,
+			theme,
+			44,
+			20,
+			false,
+			0,
+		).join("\n");
+		expect(rendered).toContain("UNSAFE TITLE");
+		expect(rendered).toContain("row value");
+		expect(rendered).not.toContain("[31m");
+		expect(rendered).not.toContain("[33m");
+	});
+
+	it("renders an explicit empty state when every configured-visible panel is unavailable", () => {
+		const hiddenBuiltins = DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false }));
+		const emptyConfig = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [{ id: "vendor:missing" as const, visible: true }, ...hiddenBuiltins],
+		};
+		const rows = contentRows(renderSidebarLines(snapshot(), emptyConfig, theme, 44, 20));
+		expect(rows).toContain("No available panels");
+		expect(rows).toContain("Open /atelier Settings");
 	});
 
 	it("renders a full-height dock with elegant terminal-native panels", () => {
@@ -383,6 +1191,21 @@ describe("sidebar snapshot and layout", () => {
 		expect(regular).toContain("OPENAI-CODEX · MEDIUM · SUBSCRIPTION");
 		expect(regular).toContain("pi-atelier · feature/sidebar ▲");
 		expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
+	});
+
+	it("uses compact layout only below 40 frame-inclusive sidebar columns", () => {
+		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
+		const compact = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 39, 36, false));
+		expect(compact).toContain("◆ Working · gitifying");
+		expect(compact).toContain("gpt-5.6-sol");
+		expect(compact).not.toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
+
+		for (const width of [40, 43, 44]) {
+			const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, width, 36, false));
+			expect(regular).toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
+			expect(regular).toContainEqual(expect.stringMatching(/^OPENAI-CODEX/));
+			expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
+		}
 	});
 
 	it("renders a compact segmented context meter that adapts to width", () => {

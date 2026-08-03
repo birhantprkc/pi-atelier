@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import atelierExtension, { SIDEBAR_PANEL_EVENT_CHANNEL } from "../extensions/index.js";
 import { saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
-import atelierExtension from "../extensions/index.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -199,6 +199,49 @@ async function withPersistedUserConfig(
 }
 
 describe("extension registration", () => {
+	it("discovers and renders a structured contributed panel through pi.events", async () => {
+		const h = harness();
+		await withPersistedUserConfig(
+			{
+				sidebarPanelLayout: [
+					{ id: "vendor:queue", visible: true },
+					...Array.from({ length: 8 }, (_, index) => ({
+						id: ["agent", "activity", "alerts", "todos", "context", "workspace", "usage", "tools"][index],
+						visible: false,
+					})),
+				],
+			},
+			async () => {
+				await start(h);
+				h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+					version: 1,
+					type: "register",
+					source: "vendor",
+					revision: 1,
+					panel: { id: "vendor:queue", title: "Queue", rows: ["queued 2"] },
+				});
+				await command(h, "sidebar on");
+				const rendered = h.overlays.at(-1)?.component.render(44).join("\\n") ?? "";
+				expect(rendered).toContain("QUEUE");
+				expect(rendered).toContain("queued 2");
+			},
+		);
+	});
+
+	it("does not let a built-in panel event spoof the Display settings", async () => {
+		const h = harness();
+		await start(h);
+		h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "agent", title: "Spoofed Agent", rows: ["attacker"] },
+		});
+		await command(h, "display");
+		expect(h.overlays.at(-1)?.component.render(120).join("\n")).not.toContain("Spoofed Agent");
+	});
+
 	it("registers the command and installs one footer in TUI mode", async () => {
 		const h = harness();
 		expect(h.commands.has("atelier")).toBe(true);
@@ -432,64 +475,57 @@ describe("extension registration", () => {
 		expect(menu).toContain("Sidebar: On");
 	});
 
-	it("drives the registered /atelier Control Center to persist and reload hidden Agent", async () => {
-		await withPersistedUserConfig({}, async () => {
-			const h = harness("tui", "linux", true);
-			h.ctx.sessionManager.getBranch.mockReturnValue([
-				{
-					type: "message",
-					message: {
-						role: "toolResult",
-						toolName: "todo",
-						details: {
-							todos: [
-								{ id: 1, text: "Visible TODO", done: false },
-								{ id: 2, text: "Completed TODO", done: true },
-							],
-							nextId: 3,
-						},
-					},
-				},
-			]);
-			h.saveConfigPatch.mockImplementation((path, patch) => persistConfigPatch(path, patch));
+	it("passes contributed titles through the public Display seam and persists enabling them", async () => {
+		await withPersistedUserConfig(
+			{
+				sidebarPanelLayout: [{ id: "vendor:missing", visible: true }],
+			},
+			async () => {
+				const h = harness();
+				await start(h);
+				h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+					version: 1,
+					type: "register",
+					source: "vendor",
+					revision: 1,
+					panel: { id: "vendor:queue", title: "Queue title", rows: ["queued"] },
+				});
+				await command(h, "display");
+				const workspace = h.overlays.at(-1)?.component;
+				const rendered = workspace?.render(120).join("\n") ?? "";
+				expect(rendered).toContain("vendor:missing");
 
-			await start(h);
-			const initialSidebar = h.overlays[0]?.component.render(44).join("\n") ?? "";
-			expect(initialSidebar).toContain("AGENT");
-			expect(initialSidebar).toContain("TODOS");
-
-			// Use the public command seam and the SelectList component's input API.
-			const controlCenter = command(h, "");
-			await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
-			h.overlays[1]?.component.handleInput("\r"); // Settings
-			await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
-			for (let index = 0; index < 3; index += 1) h.overlays[2]?.component.handleInput("\u001b[B");
-			h.overlays[2]?.component.handleInput("\r"); // Agent panel
-
-			await vi.waitFor(() =>
-				expect(h.saveConfigPatch).toHaveBeenCalledWith(expect.stringContaining("pi-atelier.json"), {
-					showSidebarAgent: false,
-				}),
-			);
-			const hiddenSidebar = h.overlays[0]?.component.render(44).join("\n") ?? "";
-			expect(hiddenSidebar).not.toContain("AGENT");
-			expect(hiddenSidebar).toContain("TODOS");
-
-			// Close the interactive menu through Back, then Close rather than resolving it in the harness.
-			await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
-			for (let index = 0; index < 4; index += 1) h.overlays[3]?.component.handleInput("\u001b[B");
-			h.overlays[3]?.component.handleInput("\r"); // Back
-			await vi.waitFor(() => expect(h.overlays).toHaveLength(5));
-			for (let index = 0; index < 3; index += 1) h.overlays[4]?.component.handleInput("\u001b[B");
-			h.overlays[4]?.component.handleInput("\r"); // Close
-			await controlCenter;
-
-			await start(h, replacementContext(h.ctx, "Reloaded session"));
-			const reloadedSidebar = h.overlays.at(-1)?.component.render(44).join("\n") ?? "";
-			expect(reloadedSidebar).not.toContain("AGENT");
-			expect(reloadedSidebar).toContain("TODOS");
-			expect(reloadedSidebar).toContain("Visible TODO");
-		});
+				// Two display rows, nine segments, and three actions precede configured panels.
+				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
+				const focusedRendered = workspace?.render(120).join("\n") ?? "";
+				expect(focusedRendered).toContain("Queue title");
+				expect(focusedRendered).toContain("unavailable");
+				workspace?.handleInput(" ");
+				workspace?.handleInput("s");
+				await vi.waitFor(() => expect(h.saveConfigPatch).toHaveBeenCalled());
+				const patch = h.saveConfigPatch.mock.calls.at(-1)?.[1] as {
+					sidebarPanelLayout?: Array<{ id: string; visible: boolean }>;
+				};
+				expect(patch.sidebarPanelLayout).toEqual(
+					expect.arrayContaining([
+						{ id: "vendor:missing", visible: true },
+						{ id: "vendor:queue", visible: true },
+					]),
+				);
+				expect(patch.sidebarPanelLayout?.map((entry) => entry.id)).toEqual([
+					"vendor:missing",
+					"agent",
+					"activity",
+					"alerts",
+					"todos",
+					"context",
+					"workspace",
+					"usage",
+					"tools",
+					"vendor:queue",
+				]);
+			},
+		);
 	});
 
 	it("passes NO_COLOR through to sidebar rendering", async () => {

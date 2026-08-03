@@ -38,6 +38,7 @@ Pi Atelier has one visual palette. Selecting a light, dark, or custom Pi theme d
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
 - Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, Workspace Pulse, and TODOS activity
+- Ordered, global-user Sidebar panel layout with draft editing, unavailable-panel retention, and a structured extension contribution contract
 - TODO tracking for compatible `todo` results, including legacy details and the optional `@juicesharp/rpiv-todo` task format
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum across every selected theme, with a `NO_COLOR` fallback
@@ -104,7 +105,7 @@ Open Pi Atelier with:
 
 The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Settings** — the Display Settings Workspace, completion notifications, sidebar tool-list expansion, and Agent panel visibility
+- **Settings** — the Display Settings Workspace, completion notifications, and sidebar tool-list expansion
 - **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
 - **Actions** — session details, rename, and safe compaction
 
@@ -137,7 +138,11 @@ The sidebar starts shown whenever the extension initializes. An explicit `off` a
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
 
-The Agent panel at the top of the sidebar can be hidden independently through **Settings → Agent panel** in the Control Center. The panel is shown by default; toggling it off saves immediately to user configuration and removes the agent state and model metadata from the sidebar.
+The Sidebar is an ordered, global-user surface separate from the footer `segmentLayout`. **Settings → Display** includes a Sidebar editor with a local draft, visibility toggles, Shift+Up/Shift+Down reordering, a Sidebar preview, one-step Undo, `D` product-default restore, explicit Save, and Escape-to-discard. Save rejects a draft with no visible panels. Built-in panel IDs are `agent`, `activity`, `alerts`, `todos`, `context`, `workspace`, `usage`, and `tools`.
+
+Extensions may contribute structured panels through the public `pi.events` channel `pi-atelier:sidebar-panels` (or the exported `registerSidebarPanel` helper). A contribution uses a stable namespaced ID such as `my-extension:queue`, a title, text rows, and an optional semantic role. The event envelope is versioned and uses `type: "register"` (or `"unregister"`) with a contributor `source` and monotonic `revision`; Atelier emits `type: "discover"` during startup so contributors loaded first can replay their current panels. Atelier owns framing, palette, sanitization, truncation, responsive composition, and height omission; contributors cannot inject TUI components or ANSI. Registration, updates, discovery, and removal are lifecycle-safe, and discovery works regardless of extension load order. New contributed panels start hidden. A configured panel that is not currently registered remains in its saved position and appears as unavailable in Settings; it is not rendered until available again. If every configured-visible panel is unavailable, the sidebar says `No available panels` and points to Settings.
+
+For compatibility, `showSidebarAgent` and `showSidebarTodos` are read when no user `sidebarPanelLayout` exists. A user `sidebarPanelLayout` takes precedence over those legacy fields and over trusted-project/session values. Sidebar layout is never read from project or session configuration, and saving it patches only the user file while preserving unrelated keys. The footer's ordered `segmentLayout` remains independent. Subagents and Skills panels are intentionally not implemented.
 
 The scan-first hierarchy leads with agent state and model when enabled, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
 
@@ -179,7 +184,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details, Agent visibility, and completion notifications are saved immediately so those preferences survive future sessions. Agent visibility and completion notifications are global user preferences, so project and session configuration cannot override them. Pi Atelier never modifies project configuration from the menu.
+Project settings override user settings only after Pi trusts the project. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details and completion notifications are saved immediately so those preferences survive future sessions. Agent visibility and completion notifications are global user preferences, so project and session configuration cannot override them. Pi Atelier never modifies project configuration from the menu.
 
 Complete example:
 
@@ -205,6 +210,16 @@ Complete example:
   "showSessionActions": true,
   "showSidebarToolNames": false,
   "showSidebarAgent": true,
+  "sidebarPanelLayout": [
+    { "id": "agent", "visible": true },
+    { "id": "activity", "visible": true },
+    { "id": "alerts", "visible": true },
+    { "id": "todos", "visible": true },
+    { "id": "context", "visible": true },
+    { "id": "workspace", "visible": true },
+    { "id": "usage", "visible": true },
+    { "id": "tools", "visible": true }
+  ],
   "showSidebarTodos": true,
   "completionNotifications": true
 }
@@ -212,15 +227,15 @@ Complete example:
 
 `segmentLayout` is ordered and every entry has explicit visibility. Pi Atelier preserves the first valid occurrence of each known ID, appends omitted IDs in Product order, and repairs `metrics` and `context` to visible without moving them. Unknown, duplicate, or malformed values produce one de-duplicated warning. Brand and extension Statuses rendering is controlled only by this normalized layout. Performance remains available for TTFT/TPS telemetry but is hidden in all three compatibility templates.
 
-Product defaults are layered with **User default**, trusted **Project override**, then **Session overrides**. The resulting value is the **Effective baseline** shown by the workspace. Pi Atelier tracks the source of density, preset identity, layout order, and each visibility value; untrusted project configuration is not read. Workspace changes are Session-scoped and immediately update the live rail. **Save** atomically patches only `preset`, `density`, and a cloned `segmentLayout` into User configuration while preserving unrelated and unknown keys; it never writes Project configuration. **Revert** clears only Display Session fields, and one-step **Undo** restores the raw Session snapshot, including after Revert. Any density, order, or visibility combination that does not exactly match a complete template has the `custom` preset identity; restoring an exact template restores its named identity.
+Product defaults are layered with **User default**, trusted **Project override**, then **Session overrides**. The resulting value is the **Effective baseline** shown by the workspace. Pi Atelier tracks the source of density, preset identity, layout order, and each visibility value; untrusted project configuration is not read. Workspace changes are Session-scoped and immediately update the live rail. **Save** atomically patches `preset`, `density`, and a cloned `segmentLayout` into User configuration and, when the Sidebar draft is dirty, also patches `sidebarPanelLayout`; unrelated and unknown keys are preserved, and it never writes Project configuration. **Revert** clears only Display Session fields, and one-step **Undo** restores the raw Session snapshot, including after Revert. Any density, order, or visibility combination that does not exactly match a complete template has the `custom` preset identity; restoring an exact template restores its named identity.
 
 Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
 
-`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only preference; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. The preference can also be toggled through **Settings → Agent panel** in the Control Center and saves immediately.
+`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
 
-`showSidebarTodos` (default `true`) controls whether the sidebar displays the TODOS panel. Set to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
+`showSidebarTodos` (default `true`) is the corresponding global user-only compatibility input for the TODOS panel. Trusted project and session values are ignored. Set it to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
 
 ## Presets
 

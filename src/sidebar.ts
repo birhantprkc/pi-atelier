@@ -12,9 +12,56 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	isSidebarPanelContributionId,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	type SidebarPanelData,
+	type SidebarPanelRole,
+	sanitizeSidebarPanelText,
+} from "./sidebar-panels.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
 import type { AtelierConfig, AtelierState, NormalizedTodo, WorkspacePulseState } from "./types.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
+
+export type {
+	SidebarPanelContribution,
+	SidebarPanelData,
+	SidebarPanelDiscoveryEvent,
+	SidebarPanelEvent,
+	SidebarPanelEventTransport,
+	SidebarPanelRegisterEvent,
+	SidebarPanelRegistry,
+	SidebarPanelRegistryOptions,
+	SidebarPanelRole,
+	SidebarPanelRow,
+	SidebarPanelUnregisterEvent,
+} from "./sidebar-panels.js";
+export {
+	BUILTIN_SIDEBAR_PANEL_IDS,
+	createSidebarPanelRegistry,
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	isSidebarPanelContributionId,
+	isSidebarPanelId,
+	isSidebarPanelRequestId,
+	isSidebarPanelSource,
+	isSidebarPanelTextWithinRawLimit,
+	registerSidebarPanel,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
+	SIDEBAR_PANEL_MAX_ID_CHARS,
+	SIDEBAR_PANEL_MAX_PANELS,
+	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_ROW_CHARS,
+	SIDEBAR_PANEL_MAX_ROWS,
+	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
+	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	sanitizeSidebarPanelText,
+} from "./sidebar-panels.js";
 
 export interface SidebarSnapshotInput {
 	state: AtelierState;
@@ -28,6 +75,7 @@ export interface SidebarSnapshotInput {
 	extensionStatuses: readonly string[];
 	runActivity?: RunActivitySnapshot;
 	todos?: readonly NormalizedTodo[];
+	sidebarPanels?: readonly SidebarPanelData[];
 }
 
 export interface SidebarSnapshot extends AtelierState {
@@ -42,6 +90,7 @@ export interface SidebarSnapshot extends AtelierState {
 	activeToolNames: readonly string[];
 	runActivity: RunActivitySnapshot;
 	todos: readonly NormalizedTodo[];
+	sidebarPanels?: readonly SidebarPanelData[];
 }
 
 function workspacePulseData(pulse: WorkspacePulseState): WorkspacePulseData | undefined {
@@ -67,6 +116,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		extensionStatuses: input.extensionStatuses,
 		runActivity: input.runActivity ?? EMPTY_RUN_ACTIVITY,
 		todos: input.todos ?? [],
+		sidebarPanels: input.sidebarPanels ?? [],
 	};
 }
 
@@ -128,7 +178,7 @@ function panelRows(
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = sanitize(title).toUpperCase();
+	const safeTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS).toUpperCase();
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -148,7 +198,7 @@ function valueRow(value: string | undefined, palette: AtelierPalette, role: Pale
 	return palette.paint(text === "—" ? "dim" : role, text);
 }
 
-const COMPACT_SIDEBAR_MAX_WIDTH = 43;
+const COMPACT_SIDEBAR_MAX_WIDTH = 39;
 
 interface SidebarLayout {
 	compact: boolean;
@@ -566,6 +616,7 @@ interface ActivityGroups {
 interface SidebarGroup {
 	name: string;
 	panel?: string;
+	panelId?: string;
 	panelRole?: PaletteRole;
 	panelJewel?: "✦" | "✧";
 	rows: string[];
@@ -591,7 +642,7 @@ function renderGroups(
 
 		const rows: string[] = [];
 		let next = index;
-		while (groups[next]?.panel === group.panel) {
+		while (groups[next]?.panel === group.panel && groups[next]?.panelId === group.panelId) {
 			rows.push(...(groups[next]?.rows ?? []));
 			next += 1;
 		}
@@ -611,6 +662,31 @@ function renderGroups(
 		index = next;
 	}
 	return rendered;
+}
+
+function panelIdForTitle(title: string): string | undefined {
+	return {
+		AGENT: "agent",
+		ACTIVITY: "activity",
+		ALERTS: "alerts",
+		TODOS: "todos",
+		CONTEXT: "context",
+		WORKSPACE: "workspace",
+		USAGE: "usage",
+		TOOLS: "tools",
+	}[title];
+}
+
+function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): string[] {
+	const rows = panel.rows.slice(0, SIDEBAR_PANEL_MAX_ROWS).map((row) => {
+		const text = sanitizeSidebarPanelText(
+			typeof row === "string" ? row : row.text,
+			SIDEBAR_PANEL_MAX_ROW_CHARS,
+		);
+		const role = typeof row === "string" ? panel.role : (row.role ?? panel.role);
+		return palette.paint((role ?? "primary") as SidebarPanelRole, text);
+	});
+	return rows.filter((row) => visibleWidth(row) > 0);
 }
 
 function durationForTool(tool: ToolActivity, now: number): string {
@@ -915,9 +991,60 @@ export function renderSidebarLines(
 			dropRank: (rows.length - index) / 100,
 		})),
 	];
+
+	// Keep panel content grouped while making the user-owned order the only
+	// source of top-to-bottom composition. Contributed panels are available only
+	// when a current registry snapshot exists; their saved entries remain in the
+	// layout and are therefore still visible to Settings as unavailable.
+	const contributed = new Map((snapshot.sidebarPanels ?? []).map((panel) => [panel.id, panel]));
+	const grouped = new Map<string, SidebarGroup[]>();
+	for (const group of groups) {
+		const id = group.panel ? panelIdForTitle(group.panel) : undefined;
+		if (!id) continue;
+		group.panelId = id;
+		const list = grouped.get(id) ?? [];
+		list.push(group);
+		grouped.set(id, list);
+	}
+	const ordered: SidebarGroup[] = groups.filter((group) => !group.panel);
+	let availableVisible = false;
+	for (const entry of config.sidebarPanelLayout) {
+		if (!entry.visible) continue;
+		const builtin = BUILTIN_SIDEBAR_PANEL_IDS.includes(
+			entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number],
+		);
+		const panel = isSidebarPanelContributionId(entry.id) ? contributed.get(entry.id) : undefined;
+		if (builtin) {
+			availableVisible = true;
+			ordered.push(...(grouped.get(entry.id) ?? []));
+		} else if (panel) {
+			availableVisible = true;
+			const rows = contributedRows(panel, palette);
+			ordered.push({
+				name: `contributed:${panel.id}`,
+				panel: sanitize(panel.title).toUpperCase() || panel.id,
+				panelId: panel.id,
+				panelRole: panel.role ?? "accent",
+				rows: rows.length > 0 ? rows : [palette.paint("dim", "No data")],
+				required: false,
+				dropRank: 25,
+			});
+		}
+	}
+	if (!availableVisible) {
+		ordered.push({
+			name: "empty",
+			panel: "SIDEBAR",
+			panelId: "__empty__",
+			panelRole: "muted",
+			rows: ["No available panels", "Open /atelier Settings"],
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
+		});
+	}
 	return renderDock(
 		renderGroups(
-			composeGroups(groups, safeHeight, contentWidth, palette, theme),
+			composeGroups(ordered, safeHeight, contentWidth, palette, theme),
 			contentWidth,
 			palette,
 			theme,
