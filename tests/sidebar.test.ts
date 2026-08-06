@@ -2082,7 +2082,7 @@ describe("sidebar component and overlay", () => {
 					width: DEFAULT_SIDEBAR_WIDTH,
 					nonCapturing: true,
 				});
-				expect(tui.render(120)).toEqual([`main:${120 - DEFAULT_SIDEBAR_WIDTH}`]);
+				expect(tui.render(120)).toEqual(["main:120"]);
 				customOptions.onHandle?.(handle as never);
 			});
 		});
@@ -2290,7 +2290,7 @@ describe("sidebar component and overlay", () => {
 		expect(controller.beginResize()).toBe(true);
 		input?.("\u001b[D");
 		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH + 1);
-		expect(tui.render(120)).toEqual([`main:${120 - DEFAULT_SIDEBAR_WIDTH - 1}`]);
+		expect(tui.render(120)).toEqual(["main:120"]);
 
 		controller.hide();
 
@@ -2360,7 +2360,7 @@ describe("sidebar component and overlay", () => {
 		});
 
 		controller.show();
-		expect(tui.render(120)).toEqual([`main:${120 - DEFAULT_SIDEBAR_WIDTH}`]);
+		expect(tui.render(120)).toEqual(["main:120"]);
 		controller.dispose();
 		await flushOverlay();
 

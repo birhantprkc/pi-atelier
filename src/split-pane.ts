@@ -28,8 +28,6 @@ export const MIN_SIDEBAR_WIDTH = 28;
 export const MAX_SIDEBAR_WIDTH = 72;
 export const MIN_MAIN_WIDTH = 64;
 
-type RenderFunction = TUI["render"];
-
 export interface SplitPaneControllerOptions {
 	defaultSidebarWidth?: number;
 	minSidebarWidth?: number;
@@ -80,8 +78,6 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		maximumSidebar,
 	);
 	let tui: TUI | undefined;
-	let originalRender: RenderFunction | undefined;
-	let wrappedRender: RenderFunction | undefined;
 	let enabled = false;
 	let disposed = false;
 	let resizing = false;
@@ -116,7 +112,11 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		maxHeight: "100%",
 		margin: 0,
 		nonCapturing: true,
-		visible: (terminalWidth) => visibleAt(terminalWidth),
+		visible: (terminalWidth) => {
+			reconcileResizeWidth(terminalWidth);
+			syncOverlayWidth(terminalWidth);
+			return visibleAt(terminalWidth);
+		},
 	};
 
 	const syncOverlayWidth = (terminalWidth = tui?.terminal.columns) => {
@@ -157,22 +157,8 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		if (tui === nextTui) return;
 		if (tui) throw new Error("Split pane is already attached to another TUI");
 		tui = nextTui;
-		originalRender = nextTui.render;
-		const previousRender = nextTui.render;
-		wrappedRender = function (this: TUI, terminalWidth: number): string[] {
-			reconcileResizeWidth(terminalWidth);
-			const reserved = effectiveSidebarWidth(terminalWidth);
-			syncOverlayWidth(terminalWidth);
-			try {
-				return previousRender.call(nextTui, terminalWidth - reserved);
-			} catch (error) {
-				stopResize(true);
-				enabled = false;
-				safely(() => options.onError?.(error));
-				return previousRender.call(nextTui, terminalWidth);
-			}
-		};
-		nextTui.render = wrappedRender;
+		reconcileResizeWidth(nextTui.terminal.columns);
+		syncOverlayWidth(nextTui.terminal.columns);
 		requestRender();
 	};
 
@@ -290,11 +276,8 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			stopResize(true);
 			disposed = true;
 			enabled = false;
-			if (tui && originalRender && tui.render === wrappedRender) tui.render = originalRender;
 			tui?.requestRender();
 			tui = undefined;
-			originalRender = undefined;
-			wrappedRender = undefined;
 		},
 	};
 	return controller;

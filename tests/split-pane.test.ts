@@ -21,6 +21,21 @@ function harness(columns = 120) {
 	return { tui, baseRender, requestRender, write };
 }
 
+function stableTuiReference(renderer: TUI): TUI {
+	return new Proxy({} as TUI, {
+		get: (_target, property) => {
+			const value = Reflect.get(renderer, property, renderer);
+			if (typeof value !== "function") return value;
+			return (...args: unknown[]) => {
+				const method = Reflect.get(renderer, property, renderer);
+				if (typeof method !== "function") throw new TypeError(`${String(property)} is not callable`);
+				return Reflect.apply(method, renderer, args);
+			};
+		},
+		set: (_target, property, value) => Reflect.set(renderer, property, value, renderer),
+	}) as TUI;
+}
+
 const press = (x: number, y = 4) => `\u001b[<0;${x};${y}M`;
 const motion = (x: number, y = 4) => `\u001b[<32;${x};${y}M`;
 const release = (x: number, y = 4) => `\u001b[<0;${x};${y}m`;
@@ -211,24 +226,24 @@ describe("temporary Resize mode", () => {
 		h.split.beginResize();
 		expect(h.split.getSidebarWidth()).toBe(56);
 		(h.tui.terminal as { columns: number }).columns = 100;
-		h.tui.render(100);
+		h.split.overlayOptions().visible?.(100, 36);
 		expect(h.split.getSidebarWidth()).toBe(36);
 		(h.tui.terminal as { columns: number }).columns = 91;
-		h.tui.render(91);
+		h.split.overlayOptions().visible?.(91, 36);
 		expect(h.split.isResizing()).toBe(false);
 		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 	});
 });
 
-describe("split pane width reservation", () => {
-	it("reserves the default sidebar width without changing overlay coordinates", () => {
+describe("sidebar overlay sizing", () => {
+	it("keeps main rendering unchanged and positions the overlay", () => {
 		const h = harness(120);
 		const split = createSplitPaneController();
 		split.attach(h.tui);
 		split.show();
 
-		expect(h.tui.render(120)).toEqual(["base:76"]);
-		expect(h.baseRender).toHaveBeenLastCalledWith(120 - DEFAULT_SIDEBAR_WIDTH);
+		expect(h.tui.render(120)).toEqual(["base:120"]);
+		expect(h.baseRender).toHaveBeenLastCalledWith(120);
 		expect(split.overlayOptions()).toMatchObject({
 			anchor: "top-right",
 			width: 44,
@@ -238,7 +253,7 @@ describe("split pane width reservation", () => {
 		});
 	});
 
-	it("keeps one overlay options object and updates its width with the split", () => {
+	it("keeps one overlay options object and updates its width", () => {
 		const h = harness(120);
 		const split = createSplitPaneController();
 		split.attach(h.tui);
@@ -249,10 +264,10 @@ describe("split pane width reservation", () => {
 
 		expect(split.overlayOptions()).toBe(retainedOptions);
 		expect(retainedOptions.width).toBe(36);
-		expect(h.tui.render(120)).toEqual(["base:84"]);
+		expect(h.tui.render(120)).toEqual(["base:120"]);
 	});
 
-	it("uses full width when hidden or too narrow and restores on widen", () => {
+	it("keeps main rendering at full width when hidden or too narrow", () => {
 		const h = harness(120);
 		const split = createSplitPaneController();
 		split.attach(h.tui);
@@ -260,7 +275,7 @@ describe("split pane width reservation", () => {
 
 		expect(h.tui.render(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH - 1)).toEqual(["base:91"]);
 		expect(split.isVisibleAtWidth(91)).toBe(false);
-		expect(h.tui.render(120)).toEqual(["base:76"]);
+		expect(h.tui.render(120)).toEqual(["base:120"]);
 
 		split.hide();
 		expect(h.tui.render(120)).toEqual(["base:120"]);
@@ -273,7 +288,7 @@ describe("split pane width reservation", () => {
 		split.show();
 
 		expect(split.isVisibleAtWidth(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH)).toBe(true);
-		expect(h.tui.render(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH)).toEqual(["base:64"]);
+		expect(h.tui.render(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH)).toEqual(["base:92"]);
 	});
 
 	it("passes zero and negative widths through unchanged", () => {
@@ -293,7 +308,7 @@ describe("split pane width reservation", () => {
 
 		split.setSidebarWidth(999);
 		expect(split.getSidebarWidth()).toBe(MAX_SIDEBAR_WIDTH);
-		expect(h.tui.render(100)).toEqual([`base:${MIN_MAIN_WIDTH}`]);
+		expect(h.tui.render(100)).toEqual(["base:100"]);
 		expect(split.overlayOptions()).toMatchObject({ width: 36 });
 
 		split.setSidebarWidth(Number.NaN);
@@ -301,11 +316,23 @@ describe("split pane width reservation", () => {
 
 		split.setSidebarWidth(-10);
 		expect(split.getSidebarWidth()).toBe(MIN_SIDEBAR_WIDTH);
-		expect(h.tui.render(100)).toEqual(["base:72"]);
+		expect(h.tui.render(100)).toEqual(["base:100"]);
 	});
 });
 
 describe("split pane render lifecycle", () => {
+	it("does not replace render through Pi 0.84's stable TUI reference", () => {
+		const h = harness();
+		const originalRender = h.tui.render;
+		const split = createSplitPaneController();
+
+		split.attach(stableTuiReference(h.tui));
+		split.show();
+
+		expect(h.tui.render).toBe(originalRender);
+		expect(h.tui.render(120)).toEqual(["base:120"]);
+	});
+
 	it("attaches once and restores the exact original method on dispose", () => {
 		const h = harness();
 		const original = h.tui.render;
@@ -334,57 +361,6 @@ describe("split pane render lifecycle", () => {
 
 		expect(h.tui.render).toBe(laterWrapper);
 		expect(h.tui.render(120)).toEqual(["base:120"]);
-	});
-
-	it("cleans up Resize mode before retrying full-width when the prior renderer throws", () => {
-		const h = harness();
-		const error = new Error("render failed");
-		h.baseRender
-			.mockImplementationOnce(() => {
-				throw error;
-			})
-			.mockImplementation((width: number) => [`base:${width}`]);
-		const unsubscribe = vi.fn();
-		const onError = vi.fn();
-		const split = createSplitPaneController({
-			subscribeInput: () => unsubscribe,
-			onError,
-		});
-		split.attach(h.tui);
-		split.show();
-		expect(split.beginResize()).toBe(true);
-
-		expect(h.tui.render(120)).toEqual(["base:120"]);
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
-		expect(unsubscribe).toHaveBeenCalledOnce();
-		expect(split.isResizing()).toBe(false);
-		expect(onError).toHaveBeenCalledWith(error);
-		expect(h.baseRender.mock.calls).toEqual([[76], [120]]);
-	});
-
-	it("calls onError, disables the split, and retries the prior renderer full-width", () => {
-		const error = new Error("render failed");
-		const onError = vi.fn();
-		const baseRender = vi
-			.fn()
-			.mockImplementationOnce(() => {
-				throw error;
-			})
-			.mockImplementation((width: number) => [`base:${width}`]);
-		const requestRender = vi.fn();
-		const tui = {
-			render: baseRender,
-			requestRender,
-			terminal: { columns: 120, rows: 36, write: vi.fn() },
-		} as unknown as TUI;
-		const split = createSplitPaneController({ onError });
-		split.attach(tui);
-		split.show();
-
-		expect(tui.render(120)).toEqual(["base:120"]);
-		expect(onError).toHaveBeenCalledWith(error);
-		expect(split.isEnabled()).toBe(false);
-		expect(baseRender.mock.calls).toEqual([[76], [120]]);
 	});
 
 	it("keeps show, hide, width updates, and requests idempotent", () => {

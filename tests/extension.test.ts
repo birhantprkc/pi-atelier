@@ -340,13 +340,13 @@ describe("extension registration", () => {
 		expect(h.saveConfig).not.toHaveBeenCalled();
 	});
 
-	it("reflows the Pi workspace beside the visible sidebar", async () => {
+	it("keeps Pi rendering untouched beneath the visible sidebar", async () => {
 		const h = harness();
 		await start(h);
 		await command(h, "sidebar on");
 
 		expect(h.overlays[0]?.options.overlayOptions()).toMatchObject({ width: 44 });
-		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:76"]);
+		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:120"]);
 
 		await command(h, "sidebar off");
 		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:120"]);

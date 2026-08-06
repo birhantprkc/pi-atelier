@@ -35,12 +35,13 @@ describe("npm package contract", () => {
 		expect(pkg.files).toEqual(expect.arrayContaining(["extensions", "src", "README.md", "LICENSE"]));
 	});
 
-	it("documents the split sidebar Resize interaction", async () => {
+	it("documents the overlay sidebar Resize interaction", async () => {
 		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 		expect(readme).toContain("Ctrl+Shift+R");
 		expect(readme).toContain("28");
 		expect(readme).toContain("72");
-		expect(readme).toContain("version-sensitive");
+		expect(readme).toContain("non-capturing overlay");
+		expect(readme).toContain("leaves Pi's renderer untouched");
 	});
 
 	it("publishes the Sidebar layout and contribution contract", async () => {
