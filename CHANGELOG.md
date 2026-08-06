@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-08-06
+
 - Restore compatibility with Pi 0.84 by removing the recursive private TUI renderer wrapper and keeping the sidebar on Pi's supported non-capturing overlay seam.
 - Test against Pi Coding Agent and Pi TUI 0.84, including the stable proxied TUI reference introduced for runtime renderer switching.
 - Add a global, ordered Sidebar panel layout with draft editing, Save/Undo/default restore, unavailable-panel retention, and a namespaced structured contribution protocol.
