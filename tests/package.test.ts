@@ -35,13 +35,15 @@ describe("npm package contract", () => {
 		expect(pkg.files).toEqual(expect.arrayContaining(["extensions", "src", "README.md", "LICENSE"]));
 	});
 
-	it("documents the overlay sidebar Resize interaction", async () => {
+	it("documents the split sidebar Resize interaction and safe fallback", async () => {
 		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 		expect(readme).toContain("Ctrl+Shift+R");
 		expect(readme).toContain("28");
 		expect(readme).toContain("72");
 		expect(readme).toContain("non-capturing overlay");
-		expect(readme).toContain("leaves Pi's renderer untouched");
+		expect(readme).toContain("bounded compatibility adapter");
+		expect(readme).toContain("Fullscreen wraps Pi's existing layout root in an `HStack`");
+		expect(readme).toContain("Unsupported renderers safely fall back");
 	});
 
 	it("publishes the Sidebar layout and contribution contract", async () => {

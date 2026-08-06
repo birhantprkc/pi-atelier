@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restore the non-overlapping Sidebar split in both Pi 0.84 renderer modes while retaining the non-capturing overlay as the content and safe fallback seam.
+- Reserve regular-mode columns through the concrete `TuiMainScreen` prototype instead of capturing Pi 0.84's stable Proxy method, avoiding the recursive render path that caused startup hangs and sustained CPU usage.
+- Reserve fullscreen columns by wrapping Pi's existing layout root in an `HStack`, preserving the transcript viewport, editor, status area, scrolling, and Sidebar width without replacing `render`.
+- Restore fullscreen divider dragging by temporarily prioritizing Resize input ahead of Pi's viewport text-selection listener; remove that listener when Resize ends so ordinary selection remains unchanged.
+- Keep the main pane at least 64 columns wide, auto-hide the Sidebar below 92 terminal columns, reconcile regular/fullscreen renderer replacements after hide/show, restore owned renderer/layout adaptations during disposal, and fall back without modification on unsupported renderers.
+- Add Pi 0.84 regressions for the real regular renderer, fullscreen `renderLayoutFrame`, stable Proxy replacement, resizing and rollback, narrow terminals, adapter restoration, unsupported fallbacks, bounded rendering, and idle CPU safety.
+
 ## 0.7.1 — 2026-08-06
 
 - Restore compatibility with Pi 0.84 by removing the recursive private TUI renderer wrapper and keeping the sidebar on Pi's supported non-capturing overlay seam.
