@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.2 — 2026-08-06
+
 - Restore the non-overlapping Sidebar split in both Pi 0.84 renderer modes while retaining the non-capturing overlay as the content and safe fallback seam.
 - Reserve regular-mode columns through the concrete `TuiMainScreen` prototype instead of capturing Pi 0.84's stable Proxy method, avoiding the recursive render path that caused startup hangs and sustained CPU usage.
 - Reserve fullscreen columns by wrapping Pi's existing layout root in an `HStack`, preserving the transcript viewport, editor, status area, scrolling, and Sidebar width without replacing `render`.
