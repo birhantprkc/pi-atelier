@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.2 — 2026-09-21
+
 - Preserve Sidebar text and borders beside inline images in regular and fullscreen mode ([#53](https://github.com/michaelmjhhhh/pi-atelier/issues/53)).
 - Temporarily hide visible transcript images while settings and other capturing overlays are open, then restore them on close without changing image data or reserved layout space. This behavior has been manually verified and accepted by the maintainer.
 
