@@ -242,6 +242,22 @@ const FOOTER_THEME = {
 	italic: (text: string) => text,
 };
 
+/** Mounts the public editor/footer factories in the order Pi uses them. */
+function mountComposer(h: ReturnType<typeof harness>) {
+	const tui = { requestRender: vi.fn(), terminal: { rows: 24, columns: 80 } };
+	const footer = h.setFooter.mock.calls[0]?.[0](tui, FOOTER_THEME, {
+		getGitBranch: () => "main",
+		getExtensionStatuses: () => new Map(),
+		onBranchChange: () => () => undefined,
+	});
+	const editor: AtelierEditor = h.setEditorComponent.mock.calls[0]?.[0](
+		tui,
+		{ borderColor: (text: string) => text, selectList: {} },
+		{ matches: () => false },
+	);
+	return { tui, footer, editor };
+}
+
 /** Builds a footer from a captured `setFooter` factory and renders it once, as Pi would. */
 function renderFooter(
 	factory: any,
@@ -359,6 +375,54 @@ describe("extension registration", () => {
 		expect(editor.render(32)[0]).toMatch(/^╭─+╮$/);
 		expect(h.shortcuts).toContain("alt+a");
 		expect(h.shortcuts).toContain("ctrl+shift+r");
+	});
+
+	it("moves session identity back to the footer while a selector replaces the editor", async () => {
+		const h = harness();
+		await start(h);
+		const { editor, footer } = mountComposer(h);
+		try {
+			const header = editor.render(80)[0];
+			for (const text of ["● READY", "project", "main", "10.0%"]) expect(header).toContain(text);
+			const telemetry = footer.render(80).join("\n");
+			expect(telemetry).toContain("⌥A");
+			for (const text of ["● READY", "project", "main", "10.0%"]) expect(telemetry).not.toContain(text);
+
+			// Pi selectors replace the editor without disposing it or rendering it again.
+			const selectorFooter = footer.render(80).join("\n");
+			for (const text of ["● READY", "project", "main", "10.0%"]) expect(selectorFooter).toContain(text);
+
+			expect(editor.render(80)[0]).toContain("● READY");
+			expect(footer.render(80).join("\n")).not.toContain("● READY");
+		} finally {
+			footer.dispose();
+		}
+	});
+
+	it.each([
+		{ columns: 80, rows: 6 },
+		{ columns: 18, rows: 24 },
+		{ columns: 20, rows: 24 },
+		{ columns: 22, rows: 24 },
+	])("keeps complete context in the footer at $columns×$rows", async ({ columns, rows }) => {
+		const h = harness();
+		await start(h);
+		const { tui, editor, footer } = mountComposer(h);
+		try {
+			expect(editor.render(80)[0]).toContain("● READY");
+			footer.render(80);
+			Object.assign(tui.terminal, { columns, rows });
+			expect(editor.render(columns)[0]).not.toContain("● READY");
+			const fallback = footer.render(columns).join("\n");
+			expect(fallback).toContain("● READY");
+			expect(fallback).toContain("10.0%");
+
+			Object.assign(tui.terminal, { columns: 80, rows: 24 });
+			expect(editor.render(80)[0]).toContain("10.0%");
+			expect(footer.render(80).join("\n")).not.toContain("10.0%");
+		} finally {
+			footer.dispose();
+		}
 	});
 
 	it("routes alt+a to the Control Center", async () => {
@@ -1800,7 +1864,7 @@ describe("extension registration", () => {
 					onBranchChange: () => () => undefined,
 				},
 			);
-			expect(footer.render(160).join("\n")).toContain("TTFT ~ · TPS ~");
+			expect(footer.render(160).join("\n")).toContain("\uf017 ~  \uf0e7 ~");
 
 			vi.setSystemTime(1_100);
 			await h.handlers.get("before_provider_request")?.(
@@ -1818,7 +1882,7 @@ describe("extension registration", () => {
 			);
 
 			expect(footerRequestRender).toHaveBeenCalled();
-			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~");
+			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 ~");
 
 			vi.setSystemTime(2_920);
 			await h.handlers.get("message_update")?.(
@@ -1829,7 +1893,7 @@ describe("extension registration", () => {
 				},
 				h.ctx,
 			);
-			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~20.0");
+			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 ~20.0/s");
 
 			vi.setSystemTime(4_420);
 			await h.handlers.get("message_end")?.(
@@ -1839,7 +1903,7 @@ describe("extension registration", () => {
 				},
 				h.ctx,
 			);
-			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS 48.0");
+			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 48.0/s");
 			workspace.handleInput("\u001b");
 			await opening;
 		} finally {
