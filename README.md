@@ -8,7 +8,7 @@ A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 
 ## Features
 
-- Responsive one-line status rail
+- Prompt-style session strip built into the composer, with Nerd Font icons and compact telemetry below
 - Live agent, tool, context, workspace, usage, and TODO information, kept compact while a Turn is running
 - Model, thinking-level, and tool controls
 - Configurable display presets, segments, and sidebar panels
@@ -21,6 +21,7 @@ A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 - Pi 0.84.0 or newer
 - Node.js 22.19.0 or newer
 - Interactive TUI mode
+- A [Nerd Font configured in your terminal](#terminal-font), such as JetBrainsMono Nerd Font Mono or FiraCode Nerd Font Mono
 
 ## Install
 
@@ -35,6 +36,18 @@ pi -e ./pi-atelier
 ```
 
 Pi packages run with your system permissions. Review third-party source before installation.
+
+### Terminal font
+
+The session strip and footer icons require a Nerd Font. macOS does not include Nerd Fonts by default. Install one with [Homebrew](https://formulae.brew.sh/cask/font-jetbrains-mono-nerd-font):
+
+```sh
+brew install --cask font-jetbrains-mono-nerd-font
+```
+
+Then select **JetBrainsMono Nerd Font Mono** in your terminal's font settings. Installing the font alone does not select it for the terminal. On other platforms, install a font from [Nerd Fonts downloads](https://www.nerdfonts.com/font-downloads) and select it in the same way.
+
+Atelier does not bundle or install fonts or change terminal settings. There is currently no plain-text icon fallback; unsupported glyphs may appear as boxes or missing symbols.
 
 ## Use
 
@@ -74,7 +87,11 @@ Status rail presets:
 - **minimal**: compact layout
 - **classic**: detailed telemetry
 
-The composer uses a rounded frame with inner padding. Thinking-level and bash-mode still color that frame through Pi.
+The composer's top border holds activity, model/thinking, workspace and Git (controlled by the Git segment), and context percentage/capacity in one continuous strip. Violet model text, cyan workspace text, and blue Git text distinguish the groups; context turns amber/red at the configured thresholds. Narrow layouts shorten long names and remove secondary detail before dropping model identity.
+
+The quieter row below shows measured token usage, cache, cost, and response timing, using icons and values instead of repeated labels. Unmeasured telemetry stays hidden. [Nerd Font prompt icons](https://starship.rs/presets/nerd-font) identify model, thinking, workspace, Git, input/output, cache, latency, throughput, and context. Display presets, visibility, and ordering still apply within each row.
+
+The composer retains its rounded frame, input padding, scroll indicators, and Pi's thinking-level/bash-mode border colors. When a Pi selector replaces the composer, the terminal is below 12 rows tall, or the editor is too narrow for the inset strip, Atelier falls back to the complete status rail below.
 
 Pi supports one custom footer and one custom editor at a time. Extension load order determines which chrome is visible.
 
