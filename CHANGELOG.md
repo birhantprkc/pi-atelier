@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.10.3 — 2026-09-22
+
 - Skip redundant HEAD and diff commands in Workspace Pulse when no tracked files have changed, preserving untracked-file reporting ([#61](https://github.com/michaelmjhhhh/pi-atelier/issues/61)).
 - Measure Sidebar height from row counts instead of repeatedly painting discarded panels, preserving panel order and existing content priorities ([#59](https://github.com/michaelmjhhhh/pi-atelier/issues/59)).
 - Suspend Git inspections, usage/history scans, and streaming token estimates while Atelier is disabled; cancel pending work, reject stale inspection results, and reconcile once on re-enable ([#57](https://github.com/michaelmjhhhh/pi-atelier/issues/57)). Preserve run/tool bookkeeping and reset partially observed response timing.
