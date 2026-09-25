@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.0 — 2026-09-26
+
 - Keep sidebar plot space reserved while a dialog covers it, instead of switching smooth native curves into character staircases. Restore the plot after the dialog closes.
 
 - Remove the Control Center Actions page, including session details, rename and compaction prompts, and the unused `showSessionActions` setting.
